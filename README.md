@@ -676,8 +676,8 @@ outputs/
 
 **Your Name**
 
-- GitHub: [@yourusername](https://github.com/yourusername)
-- Email: your.email@example.com
+- GitHub: [@HIKER2005](https://github.com/HIKER2005)
+- Email: 1450086428@qq.com
 
 ---
 
@@ -696,7 +696,7 @@ outputs/
 
 <div align="center">
 
-**Made with ❤️ by [Your Name]**
+**Made with ❤️ by [HIKER2005]**
 
 [回到顶部](#bilstm-crf-中文命名实体识别-ner)
 
@@ -711,4 +711,5 @@ outputs/
 2. ✅ **精简内容** - 移除了不存在的脚本和功能
 3. ✅ **保留核心功能** - 数据生成、训练、预测、可视化
 4. ✅ **实用的快速开始** - 清晰的步骤和命令
+
 5. ✅ **完整的文档** - 从安装到使用的全流程
