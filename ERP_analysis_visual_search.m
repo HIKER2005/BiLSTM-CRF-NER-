@@ -30,79 +30,52 @@
 clear; clc; eeglab;
 
 %% ========================= 参数设置（需要修改的部分）=========================
-Subj = [1:10];                          %%% 被试编号，根据实际被试数量修改
 file_path = 'D:\实验一数据\闪烁光实验一\预处理结束\'; %%% 数据文件所在路径，修改为你的实际路径
-file_suffix = '.set';                   %%% 文件后缀
 
-%%% =================== 文件命名规则（三选一，取消注释你需要的那行）===================
-%%% 方式1: 编号.set（如 1.set, 2.set ...）
-% file_name_func = @(s) [num2str(s) file_suffix];
+%%% =================== 被试文件定义 ===================
+%%% 方式1（推荐）：自动读取目录下所有 .set 文件作为被试
+%%% 脚本会自动扫描 file_path 中的所有 .set 文件，每个文件视为一个被试
+auto_scan = true;  % true=自动扫描目录, false=手动指定文件名列表
 
-%%% 方式2: 编号_后缀.set（如 1_preprocessed.set, 2_preprocessed.set ...）
-% file_name_func = @(s) [num2str(s) '_preprocessed' file_suffix];
+%%% 方式2：手动列出每个被试的文件名（当 auto_scan = false 时使用）
+%%% 取消下面的注释并填入你的文件名
+% SubjFiles = {
+%     'denghaowei_processed.set'
+%     'houyuejiao_processed.set'
+%     'huangjingjie_processed.set'
+%     'jiangyan_processed.set'
+%     'jinpengyu_processed.set'
+%     'jiqiang_processed.set'
+%     'niuhuan_processed.set'
+%     'qiuyuanrong_processed.set'
+%     'wanghongqi_processed.set'
+%     'zhouxiangling_processed.set'
+% };
 
-%%% 方式3: 前缀+编号+后缀.set（如 sub01_preprocessed.set ...）
-% file_name_func = @(s) ['sub' sprintf('%02d', s) '_preprocessed' file_suffix];
-
-%%% 方式4: 自动检测模式 —— 先扫描目录中的 .set 文件，打印列表，再决定命名规则
-%%% 首次运行建议使用此模式，确认文件名格式后再改为上面的固定模式
-file_name_func = [];  % 留空 = 启用自动扫描模式
-
-%% ========== 自动扫描目录中的 .set 文件（帮助你确认文件命名格式）==========
-fprintf('\n====== 扫描数据目录: %s ======\n', file_path);
-if exist(file_path, 'dir')
-    set_files = dir(fullfile(file_path, '*.set'));
-    if isempty(set_files)
-        error('错误：目录 %s 中没有找到任何 .set 文件！请检查路径。', file_path);
-    end
-    fprintf('找到 %d 个 .set 文件:\n', length(set_files));
-    for fi = 1:length(set_files)
-        fprintf('  [%d] %s\n', fi, set_files(fi).name);
-    end
-    fprintf('\n');
-    
-    % 如果 file_name_func 为空，尝试自动匹配文件名模式
-    if isempty(file_name_func)
-        fprintf('>>> 自动扫描模式已启用，正在尝试匹配文件...\n');
-        % 构建一个文件名查找表（用于按被试编号查找文件）
-        file_lookup = containers.Map('KeyType', 'int32', 'ValueType', 'char');
-        for fi = 1:length(set_files)
-            fname = set_files(fi).name;
-            % 尝试从文件名中提取数字编号
-            nums = regexp(fname, '(\d+)', 'tokens');
-            if ~isempty(nums)
-                subj_num = str2double(nums{1}{1});
-                file_lookup(subj_num) = fname;
-            end
-        end
-        fprintf('自动匹配结果（被试编号 -> 文件名）:\n');
-        matched_keys = keys(file_lookup);
-        for ki = 1:length(matched_keys)
-            fprintf('  被试 %d -> %s\n', matched_keys{ki}, file_lookup(matched_keys{ki}));
-        end
-        fprintf('\n');
-        
-        % 检查请求的被试是否都能匹配到文件
-        missing_subj = [];
-        for si = 1:length(Subj)
-            if ~isKey(file_lookup, int32(Subj(si)))
-                missing_subj = [missing_subj, Subj(si)];
-            end
-        end
-        if ~isempty(missing_subj)
-            warning('以下被试编号在目录中未找到匹配文件: %s', num2str(missing_subj));
-            fprintf('请检查：\n');
-            fprintf('  1. file_path 路径是否正确\n');
-            fprintf('  2. Subj 被试编号是否与文件名中的数字一致\n');
-            fprintf('  3. 文件是否已完成预处理并保存为 .set 格式\n\n');
-        end
-        
-        % 使用查找表作为命名函数
-        file_name_func = @(s) file_lookup(int32(s));
-    end
-else
+%% ========== 扫描/确认被试文件列表 ==========
+fprintf('\n====== 数据目录: %s ======\n', file_path);
+if ~exist(file_path, 'dir')
     error('错误：目录不存在: %s\n请检查 file_path 设置。', file_path);
 end
+
+if auto_scan
+    % 自动扫描目录中所有 .set 文件
+    set_files = dir(fullfile(file_path, '*.set'));
+    if isempty(set_files)
+        error('错误：目录 %s 中没有找到任何 .set 文件！', file_path);
+    end
+    SubjFiles = {set_files.name}';  % 转为列向量 cell 数组
+end
+
+nSubj = length(SubjFiles);
+fprintf('共找到 %d 个被试文件:\n', nSubj);
+for fi = 1:nSubj
+    fprintf('  被试%2d: %s\n', fi, SubjFiles{fi});
+end
+fprintf('\n');
+
+% 定义被试编号（1 到 nSubj）
+Subj = 1:nSubj;
 
 % 分段参数
 epoch_window = [-0.1 0.8];             % 分段时间窗，单位：秒（-100ms 到 800ms）
@@ -146,14 +119,8 @@ chan_idx = [];                          % 稍后自动查找索引
 %% ========================= Part 1: 复合标记创建与分段 =========================
 fprintf('\n====== 开始处理数据 ======\n');
 
-for i = 1:length(Subj)
-    % 根据命名规则构建文件名
-    try
-        file_name = file_name_func(Subj(i));
-    catch
-        warning('被试 %d 无法匹配到文件，跳过！', Subj(i));
-        continue;
-    end
+for i = 1:nSubj
+    file_name = SubjFiles{i};
     
     % 检查文件是否存在
     full_path = fullfile(file_path, file_name);
@@ -162,12 +129,12 @@ for i = 1:length(Subj)
         continue;
     end
     
-    fprintf('\n--- 正在处理被试 %d: %s ---\n', Subj(i), file_name);
+    fprintf('\n--- 正在处理被试 %d/%d: %s ---\n', i, nSubj, file_name);
     
     EEG = pop_loadset('filename', file_name, 'filepath', file_path);
     
-    % 第一次循环时查找感兴趣电极的索引
-    if i == 1
+    % 第一次成功加载时查找感兴趣电极的索引
+    if isempty(chan_idx)
         for ch = 1:length(EEG.chanlocs)
             if strcmpi(EEG.chanlocs(ch).labels, chan_of_interest)
                 chan_idx = ch;
@@ -271,7 +238,7 @@ for i = 1:length(Subj)
         end
         
         % 打印试次统计
-        fprintf('  被试 %d 试次统计:\n', Subj(i));
+        fprintf('  被试 %d (%s) 试次统计:\n', i, file_name);
         fprintf('    A正确: %d, B正确: %d, C正确: %d\n', trial_count(1), trial_count(3), trial_count(5));
         fprintf('    A错误: %d, B错误: %d, C错误: %d\n', trial_count(2), trial_count(4), trial_count(6));
         
@@ -280,7 +247,7 @@ for i = 1:length(Subj)
         
         % 分段：以复合标记时间点为 0 点
         EEG = pop_epoch(EEG, num2cell(all_markers_to_epoch), epoch_window, ...
-            'newname', ['sub' num2str(Subj(i)) '_epoched'], 'epochinfo', 'yes');
+            'newname', [file_name '_epoched'], 'epochinfo', 'yes');
         
         % 基线校正
         EEG = pop_rmbase(EEG, baseline_window);
@@ -307,7 +274,7 @@ for i = 1:length(Subj)
             % data 为 subj × cond × channel × timepoints 的四维数组
             data(i, j, :, :) = squeeze(mean(EEG_temp.data, 3));
         else
-            warning('  被试 %d 条件 %s 无有效 epoch！', Subj(i), Cond_names{j});
+            warning('  被试 %d (%s) 条件 %s 无有效 epoch！', i, file_name, Cond_names{j});
             data(i, j, :, :) = zeros(EEG.nbchan, EEG.pnts);
         end
     end
@@ -322,7 +289,7 @@ EEG.chanlocs = chanloc;
 
 % 保存数据
 save_path = fullfile(file_path, 'all_data.mat');
-save(save_path, 'data', 'EEG', 'Subj', 'Cond_names', 'Cond_markers', 'chan_idx', 'chan_of_interest');
+save(save_path, 'data', 'EEG', 'Subj', 'SubjFiles', 'Cond_names', 'Cond_markers', 'chan_idx', 'chan_of_interest');
 fprintf('\n数据已保存至: %s\n', save_path);
 fprintf('data 维度: %s (被试 × 条件 × 电极 × 时间点)\n', mat2str(size(data)));
 
@@ -488,12 +455,12 @@ P3_win_idx = find(EEG.times >= P3_search_window(1) & EEG.times <= P3_search_wind
 
 % 为每个被试每个条件提取 N2 和 P3 的振幅和潜伏期
 % 维度: 被试 × 条件
-N2_amp = zeros(length(Subj), 3);
-N2_lat = zeros(length(Subj), 3);
-P3_amp = zeros(length(Subj), 3);
-P3_lat = zeros(length(Subj), 3);
+N2_amp = zeros(nSubj, 3);
+N2_lat = zeros(nSubj, 3);
+P3_amp = zeros(nSubj, 3);
+P3_lat = zeros(nSubj, 3);
 
-for i = 1:length(Subj)
+for i = 1:nSubj
     for c = 1:3  % 只对三个正确条件
         wave = squeeze(data(i, c, chan_idx, :));
         
@@ -528,10 +495,10 @@ end
 
 %% ---- 4.2 平均振幅测量（用于统计分析更稳健）----
 % 在成分峰值前后一个时间窗口内取平均振幅，比单点峰值更稳健
-N2_mean_amp = zeros(length(Subj), 3);
-P3_mean_amp = zeros(length(Subj), 3);
+N2_mean_amp = zeros(nSubj, 3);
+P3_mean_amp = zeros(nSubj, 3);
 
-for i = 1:length(Subj)
+for i = 1:nSubj
     for c = 1:3
         N2_mean_amp(i, c) = mean(squeeze(data(i, c, chan_idx, N2_start_idx:N2_end_idx)));
         P3_mean_amp(i, c) = mean(squeeze(data(i, c, chan_idx, P3_start_idx:P3_end_idx)));
@@ -544,7 +511,7 @@ figure('Name', 'N2 和 P3 振幅柱状图', 'NumberTitle', 'off');
 % N2 平均振幅柱状图
 subplot(121); hold on;
 means_N2 = mean(N2_mean_amp);
-se_N2 = std(N2_mean_amp) / sqrt(length(Subj));
+se_N2 = std(N2_mean_amp) / sqrt(nSubj);
 bar_handle = bar(means_N2);
 bar_handle.FaceColor = 'flat';
 bar_handle.CData = [0 0 1; 0 0.6 0; 1 0 0];  % A=蓝, B=绿, C=红
@@ -557,7 +524,7 @@ box off;
 % P3 平均振幅柱状图
 subplot(122); hold on;
 means_P3 = mean(P3_mean_amp);
-se_P3 = std(P3_mean_amp) / sqrt(length(Subj));
+se_P3 = std(P3_mean_amp) / sqrt(nSubj);
 bar_handle = bar(means_P3);
 bar_handle.FaceColor = 'flat';
 bar_handle.CData = [0 0 1; 0 0.6 0; 1 0 0];
@@ -572,7 +539,7 @@ figure('Name', 'N2 和 P3 潜伏期柱状图', 'NumberTitle', 'off');
 
 subplot(121); hold on;
 means_N2_lat = mean(N2_lat);
-se_N2_lat = std(N2_lat) / sqrt(length(Subj));
+se_N2_lat = std(N2_lat) / sqrt(nSubj);
 bar_handle = bar(means_N2_lat);
 bar_handle.FaceColor = 'flat';
 bar_handle.CData = [0 0 1; 0 0.6 0; 1 0 0];
@@ -584,7 +551,7 @@ box off;
 
 subplot(122); hold on;
 means_P3_lat = mean(P3_lat);
-se_P3_lat = std(P3_lat) / sqrt(length(Subj));
+se_P3_lat = std(P3_lat) / sqrt(nSubj);
 bar_handle = bar(means_P3_lat);
 bar_handle.FaceColor = 'flat';
 bar_handle.CData = [0 0 1; 0 0.6 0; 1 0 0];
@@ -599,8 +566,8 @@ box off;
 %% ========================================================================
 % 如果需要手动选择波峰，取消下面这段的注释
 
-% Lat_Amp = nan(length(Subj), 4);  % [N2_lat, P3_lat, N2_amp, P3_amp]
-% for i = 1:length(Subj)
+% Lat_Amp = nan(nSubj, 4);  % [N2_lat, P3_lat, N2_amp, P3_amp]
+% for i = 1:nSubj
 %     figure; hold on;
 %     set(gca, 'YDir', 'reverse');
 %     
@@ -611,7 +578,7 @@ box off;
 %     % 组平均波形（黑色，作参考）
 %     plot(EEG.times, squeeze(mean(mean(data(:, 1:3, chan_idx, :), 2), 1)), 'k', 'LineWidth', 1);
 %     
-%     title(sprintf('被试 %d - 红=个体, 黑=组平均 (请依次点击 N2 和 P3)', Subj(i)));
+%     title(sprintf('被试 %d (%s) - 红=个体, 黑=组平均 (请依次点击 N2 和 P3)', i, SubjFiles{i}));
 %     legend('个体波形', '组平均波形');
 %     xlabel('Latency (ms)'); ylabel('Amplitude (\muV)');
 %     
@@ -729,9 +696,15 @@ end
 % 导出平均振幅数据到 CSV（用于 SPSS / R / jamovi 等统计软件）
 fprintf('\n====== 导出统计数据 ======\n');
 
+% 提取被试姓名（去掉 _processed.set 后缀）作为标识
+SubjNames = cell(nSubj, 1);
+for si = 1:nSubj
+    [~, SubjNames{si}, ~] = fileparts(SubjFiles{si});
+end
+
 % N2 平均振幅
 T_N2 = table();
-T_N2.Subject = Subj(:);
+T_N2.Subject = SubjNames;
 for c = 1:3
     T_N2.(Cond_names{c}) = N2_mean_amp(:, c);
 end
@@ -740,7 +713,7 @@ fprintf('N2 平均振幅已导出至: %s\n', fullfile(file_path, 'N2_mean_amplit
 
 % P3 平均振幅
 T_P3 = table();
-T_P3.Subject = Subj(:);
+T_P3.Subject = SubjNames;
 for c = 1:3
     T_P3.(Cond_names{c}) = P3_mean_amp(:, c);
 end
@@ -749,7 +722,7 @@ fprintf('P3 平均振幅已导出至: %s\n', fullfile(file_path, 'P3_mean_amplit
 
 % N2 峰值潜伏期
 T_N2_lat = table();
-T_N2_lat.Subject = Subj(:);
+T_N2_lat.Subject = SubjNames;
 for c = 1:3
     T_N2_lat.(Cond_names{c}) = N2_lat(:, c);
 end
@@ -757,7 +730,7 @@ writetable(T_N2_lat, fullfile(file_path, 'N2_peak_latency.csv'));
 
 % P3 峰值潜伏期
 T_P3_lat = table();
-T_P3_lat.Subject = Subj(:);
+T_P3_lat.Subject = SubjNames;
 for c = 1:3
     T_P3_lat.(Cond_names{c}) = P3_lat(:, c);
 end
