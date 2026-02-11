@@ -27,7 +27,11 @@
 %    103 = A刺激 + 有目标 + 无反应   203 = B刺激 + 有目标 + 无反应   303 = C刺激 + 有目标 + 无反应
 %% ========================================================================
 
-clear; clc; eeglab;
+clear; clc;
+script_version = 'v6_2026-02-11';
+fprintf('\n====== ERP分析脚本 版本: %s ======\n', script_version);
+fprintf('如果版本号不是 %s，请重新下载脚本！\n\n', script_version);
+eeglab;
 
 %% ========================= 参数设置（需要修改的部分）=========================
 file_path = 'D:\实验一数据\闪烁光实验一\预处理结束\'; %%% 数据文件所在路径，修改为你的实际路径
@@ -372,6 +376,17 @@ for i = 1:nSubj
         end
         
         % 打印条件分配统计
+        % 先打印 epoch_condition 的实际值分布（调试用）
+        unique_conds = unique(epoch_condition(epoch_condition > 0));
+        if ~isempty(unique_conds)
+            fprintf('  [调试] epoch_condition 实际值分布:\n');
+            for uc = 1:length(unique_conds)
+                fprintf('    编码 %.1f: %d 个 epoch\n', unique_conds(uc), sum(epoch_condition == unique_conds(uc)));
+            end
+        else
+            fprintf('  [调试] 警告：没有任何epoch被成功分配条件！\n');
+        end
+        
         fprintf('  条件分配统计（以标记41为锁时点的epoch）:\n');
         for c = 1:length(Cond_markers)
             n_ep = sum(epoch_condition == Cond_markers(c));
