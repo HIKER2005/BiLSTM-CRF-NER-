@@ -31,10 +31,78 @@ clear; clc; eeglab;
 
 %% ========================= 参数设置（需要修改的部分）=========================
 Subj = [1:10];                          %%% 被试编号，根据实际被试数量修改
-file_path = 'D:\EEG_data\';            %%% 数据文件所在路径，需要修改为你的实际路径
+file_path = 'D:\实验一数据\闪烁光实验一\预处理结束\'; %%% 数据文件所在路径，修改为你的实际路径
 file_suffix = '.set';                   %%% 文件后缀
-file_prefix = '';                       %%% 文件前缀（如有），如 'sub'
-file_postfix = '_preprocessed';         %%% 文件名后部分（如有），如 '_preprocessed'
+
+%%% =================== 文件命名规则（三选一，取消注释你需要的那行）===================
+%%% 方式1: 编号.set（如 1.set, 2.set ...）
+% file_name_func = @(s) [num2str(s) file_suffix];
+
+%%% 方式2: 编号_后缀.set（如 1_preprocessed.set, 2_preprocessed.set ...）
+% file_name_func = @(s) [num2str(s) '_preprocessed' file_suffix];
+
+%%% 方式3: 前缀+编号+后缀.set（如 sub01_preprocessed.set ...）
+% file_name_func = @(s) ['sub' sprintf('%02d', s) '_preprocessed' file_suffix];
+
+%%% 方式4: 自动检测模式 —— 先扫描目录中的 .set 文件，打印列表，再决定命名规则
+%%% 首次运行建议使用此模式，确认文件名格式后再改为上面的固定模式
+file_name_func = [];  % 留空 = 启用自动扫描模式
+
+%% ========== 自动扫描目录中的 .set 文件（帮助你确认文件命名格式）==========
+fprintf('\n====== 扫描数据目录: %s ======\n', file_path);
+if exist(file_path, 'dir')
+    set_files = dir(fullfile(file_path, '*.set'));
+    if isempty(set_files)
+        error('错误：目录 %s 中没有找到任何 .set 文件！请检查路径。', file_path);
+    end
+    fprintf('找到 %d 个 .set 文件:\n', length(set_files));
+    for fi = 1:length(set_files)
+        fprintf('  [%d] %s\n', fi, set_files(fi).name);
+    end
+    fprintf('\n');
+    
+    % 如果 file_name_func 为空，尝试自动匹配文件名模式
+    if isempty(file_name_func)
+        fprintf('>>> 自动扫描模式已启用，正在尝试匹配文件...\n');
+        % 构建一个文件名查找表（用于按被试编号查找文件）
+        file_lookup = containers.Map('KeyType', 'int32', 'ValueType', 'char');
+        for fi = 1:length(set_files)
+            fname = set_files(fi).name;
+            % 尝试从文件名中提取数字编号
+            nums = regexp(fname, '(\d+)', 'tokens');
+            if ~isempty(nums)
+                subj_num = str2double(nums{1}{1});
+                file_lookup(subj_num) = fname;
+            end
+        end
+        fprintf('自动匹配结果（被试编号 -> 文件名）:\n');
+        matched_keys = keys(file_lookup);
+        for ki = 1:length(matched_keys)
+            fprintf('  被试 %d -> %s\n', matched_keys{ki}, file_lookup(matched_keys{ki}));
+        end
+        fprintf('\n');
+        
+        % 检查请求的被试是否都能匹配到文件
+        missing_subj = [];
+        for si = 1:length(Subj)
+            if ~isKey(file_lookup, int32(Subj(si)))
+                missing_subj = [missing_subj, Subj(si)];
+            end
+        end
+        if ~isempty(missing_subj)
+            warning('以下被试编号在目录中未找到匹配文件: %s', num2str(missing_subj));
+            fprintf('请检查：\n');
+            fprintf('  1. file_path 路径是否正确\n');
+            fprintf('  2. Subj 被试编号是否与文件名中的数字一致\n');
+            fprintf('  3. 文件是否已完成预处理并保存为 .set 格式\n\n');
+        end
+        
+        % 使用查找表作为命名函数
+        file_name_func = @(s) file_lookup(int32(s));
+    end
+else
+    error('错误：目录不存在: %s\n请检查 file_path 设置。', file_path);
+end
 
 % 分段参数
 epoch_window = [-0.1 0.8];             % 分段时间窗，单位：秒（-100ms 到 800ms）
@@ -79,9 +147,21 @@ chan_idx = [];                          % 稍后自动查找索引
 fprintf('\n====== 开始处理数据 ======\n');
 
 for i = 1:length(Subj)
-    % 构建文件名，根据你的命名规则修改
-    file_name = [file_prefix num2str(Subj(i)) file_postfix file_suffix];
-    %%% 例如：'1_preprocessed.set' 或 'sub01.set'，请根据实际情况修改上面的前后缀
+    % 根据命名规则构建文件名
+    try
+        file_name = file_name_func(Subj(i));
+    catch
+        warning('被试 %d 无法匹配到文件，跳过！', Subj(i));
+        continue;
+    end
+    
+    % 检查文件是否存在
+    full_path = fullfile(file_path, file_name);
+    if ~exist(full_path, 'file')
+        warning('文件不存在，跳过: %s', full_path);
+        continue;
+    end
+    
     fprintf('\n--- 正在处理被试 %d: %s ---\n', Subj(i), file_name);
     
     EEG = pop_loadset('filename', file_name, 'filepath', file_path);
@@ -241,7 +321,7 @@ EEG.times = tepoch;
 EEG.chanlocs = chanloc;
 
 % 保存数据
-save_path = [file_path 'all_data.mat'];
+save_path = fullfile(file_path, 'all_data.mat');
 save(save_path, 'data', 'EEG', 'Subj', 'Cond_names', 'Cond_markers', 'chan_idx', 'chan_of_interest');
 fprintf('\n数据已保存至: %s\n', save_path);
 fprintf('data 维度: %s (被试 × 条件 × 电极 × 时间点)\n', mat2str(size(data)));
@@ -655,8 +735,8 @@ T_N2.Subject = Subj(:);
 for c = 1:3
     T_N2.(Cond_names{c}) = N2_mean_amp(:, c);
 end
-writetable(T_N2, [file_path 'N2_mean_amplitude.csv']);
-fprintf('N2 平均振幅已导出至: %s\n', [file_path 'N2_mean_amplitude.csv']);
+writetable(T_N2, fullfile(file_path, 'N2_mean_amplitude.csv'));
+fprintf('N2 平均振幅已导出至: %s\n', fullfile(file_path, 'N2_mean_amplitude.csv'));
 
 % P3 平均振幅
 T_P3 = table();
@@ -664,8 +744,8 @@ T_P3.Subject = Subj(:);
 for c = 1:3
     T_P3.(Cond_names{c}) = P3_mean_amp(:, c);
 end
-writetable(T_P3, [file_path 'P3_mean_amplitude.csv']);
-fprintf('P3 平均振幅已导出至: %s\n', [file_path 'P3_mean_amplitude.csv']);
+writetable(T_P3, fullfile(file_path, 'P3_mean_amplitude.csv'));
+fprintf('P3 平均振幅已导出至: %s\n', fullfile(file_path, 'P3_mean_amplitude.csv'));
 
 % N2 峰值潜伏期
 T_N2_lat = table();
@@ -673,7 +753,7 @@ T_N2_lat.Subject = Subj(:);
 for c = 1:3
     T_N2_lat.(Cond_names{c}) = N2_lat(:, c);
 end
-writetable(T_N2_lat, [file_path 'N2_peak_latency.csv']);
+writetable(T_N2_lat, fullfile(file_path, 'N2_peak_latency.csv'));
 
 % P3 峰值潜伏期
 T_P3_lat = table();
@@ -681,6 +761,6 @@ T_P3_lat.Subject = Subj(:);
 for c = 1:3
     T_P3_lat.(Cond_names{c}) = P3_lat(:, c);
 end
-writetable(T_P3_lat, [file_path 'P3_peak_latency.csv']);
+writetable(T_P3_lat, fullfile(file_path, 'P3_peak_latency.csv'));
 
 fprintf('\n====== 所有分析完成！ ======\n');
