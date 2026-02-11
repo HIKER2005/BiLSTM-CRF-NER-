@@ -189,7 +189,7 @@ for i = 1:nSubj
                 end
                 % 创建复合标记
                 if ~isnan(stim_type)
-                    stim_code = stim_type / 10;
+                    stim_code = round(stim_type / 10);  % 11->1, 21->2, 31->3（用round避免浮点问题）
                     if resp_type == correct_marker, resp_code = 1;
                     elseif resp_type == incorrect_marker, resp_code = 2;
                     elseif resp_type == no_response_marker, resp_code = 3;
@@ -341,7 +341,7 @@ for i = 1:nSubj
             for si_k = 1:length(stim_events_idx)
                 k = stim_events_idx(si_k);
                 if ismember(types_num(k), stim_markers)
-                    stim_code = types_num(k) / 10;  % 11->1, 21->2, 31->3
+                    stim_code = round(types_num(k) / 10);  % 11->1, 21->2, 31->3
                     break;
                 end
             end
@@ -352,7 +352,7 @@ for i = 1:nSubj
                 for prev_ep = (ep - 1):-1:max(1, ep - 15)
                     tl_prev = time_lock_types(prev_ep);
                     if ismember(tl_prev, stim_markers)
-                        stim_code = tl_prev / 10;
+                        stim_code = round(tl_prev / 10);  % 11->1, 21->2, 31->3
                         break;
                     end
                     % 碰到另一个搜索标记(41/42)就停止，说明跨试次了
@@ -824,25 +824,26 @@ for si = 1:nSubj
 end
 
 % N2 平均振幅
-T_N2 = table(SubjNames, N2_mean_amp(:,1), N2_mean_amp(:,2), N2_mean_amp(:,3), ...
-    'VariableNames', {'Subject', Cond_names{1}, Cond_names{2}, Cond_names{3}});
+var_names = {'Subject', 'A_correct', 'B_correct', 'C_correct'};
+T_N2 = table(SubjNames, N2_mean_amp(:,1), N2_mean_amp(:,2), N2_mean_amp(:,3));
+T_N2.Properties.VariableNames = var_names;
 writetable(T_N2, fullfile(file_path, 'N2_mean_amplitude.csv'));
 fprintf('N2 平均振幅已导出至: %s\n', fullfile(file_path, 'N2_mean_amplitude.csv'));
 
 % P3 平均振幅
-T_P3 = table(SubjNames, P3_mean_amp(:,1), P3_mean_amp(:,2), P3_mean_amp(:,3), ...
-    'VariableNames', {'Subject', Cond_names{1}, Cond_names{2}, Cond_names{3}});
+T_P3 = table(SubjNames, P3_mean_amp(:,1), P3_mean_amp(:,2), P3_mean_amp(:,3));
+T_P3.Properties.VariableNames = var_names;
 writetable(T_P3, fullfile(file_path, 'P3_mean_amplitude.csv'));
 fprintf('P3 平均振幅已导出至: %s\n', fullfile(file_path, 'P3_mean_amplitude.csv'));
 
 % N2 峰值潜伏期
-T_N2_lat = table(SubjNames, N2_lat(:,1), N2_lat(:,2), N2_lat(:,3), ...
-    'VariableNames', {'Subject', Cond_names{1}, Cond_names{2}, Cond_names{3}});
+T_N2_lat = table(SubjNames, N2_lat(:,1), N2_lat(:,2), N2_lat(:,3));
+T_N2_lat.Properties.VariableNames = var_names;
 writetable(T_N2_lat, fullfile(file_path, 'N2_peak_latency.csv'));
 
 % P3 峰值潜伏期
-T_P3_lat = table(SubjNames, P3_lat(:,1), P3_lat(:,2), P3_lat(:,3), ...
-    'VariableNames', {'Subject', Cond_names{1}, Cond_names{2}, Cond_names{3}});
+T_P3_lat = table(SubjNames, P3_lat(:,1), P3_lat(:,2), P3_lat(:,3));
+T_P3_lat.Properties.VariableNames = var_names;
 writetable(T_P3_lat, fullfile(file_path, 'P3_peak_latency.csv'));
 
 fprintf('\n====== 所有分析完成！ ======\n');
