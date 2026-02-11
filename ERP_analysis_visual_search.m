@@ -838,27 +838,43 @@ for si = 1:nSubj
     [~, SubjNames{si}, ~] = fileparts(SubjFiles{si});
 end
 
+% 使用 fprintf 直接写 CSV（避免 EEGLAB 插件覆盖 MATLAB 的 table 函数）
+csv_header = 'Subject,A_correct,B_correct,C_correct\n';
+
 % N2 平均振幅
-var_names = {'Subject', 'A_correct', 'B_correct', 'C_correct'};
-T_N2 = table(SubjNames, N2_mean_amp(:,1), N2_mean_amp(:,2), N2_mean_amp(:,3));
-T_N2.Properties.VariableNames = var_names;
-writetable(T_N2, fullfile(file_path, 'N2_mean_amplitude.csv'));
+fid = fopen(fullfile(file_path, 'N2_mean_amplitude.csv'), 'w');
+fprintf(fid, csv_header);
+for si = 1:nSubj
+    fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, N2_mean_amp(si,1), N2_mean_amp(si,2), N2_mean_amp(si,3));
+end
+fclose(fid);
 fprintf('N2 平均振幅已导出至: %s\n', fullfile(file_path, 'N2_mean_amplitude.csv'));
 
 % P3 平均振幅
-T_P3 = table(SubjNames, P3_mean_amp(:,1), P3_mean_amp(:,2), P3_mean_amp(:,3));
-T_P3.Properties.VariableNames = var_names;
-writetable(T_P3, fullfile(file_path, 'P3_mean_amplitude.csv'));
+fid = fopen(fullfile(file_path, 'P3_mean_amplitude.csv'), 'w');
+fprintf(fid, csv_header);
+for si = 1:nSubj
+    fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, P3_mean_amp(si,1), P3_mean_amp(si,2), P3_mean_amp(si,3));
+end
+fclose(fid);
 fprintf('P3 平均振幅已导出至: %s\n', fullfile(file_path, 'P3_mean_amplitude.csv'));
 
 % N2 峰值潜伏期
-T_N2_lat = table(SubjNames, N2_lat(:,1), N2_lat(:,2), N2_lat(:,3));
-T_N2_lat.Properties.VariableNames = var_names;
-writetable(T_N2_lat, fullfile(file_path, 'N2_peak_latency.csv'));
+fid = fopen(fullfile(file_path, 'N2_peak_latency.csv'), 'w');
+fprintf(fid, csv_header);
+for si = 1:nSubj
+    fprintf(fid, '%s,%.1f,%.1f,%.1f\n', SubjNames{si}, N2_lat(si,1), N2_lat(si,2), N2_lat(si,3));
+end
+fclose(fid);
+fprintf('N2 峰值潜伏期已导出至: %s\n', fullfile(file_path, 'N2_peak_latency.csv'));
 
 % P3 峰值潜伏期
-T_P3_lat = table(SubjNames, P3_lat(:,1), P3_lat(:,2), P3_lat(:,3));
-T_P3_lat.Properties.VariableNames = var_names;
-writetable(T_P3_lat, fullfile(file_path, 'P3_peak_latency.csv'));
+fid = fopen(fullfile(file_path, 'P3_peak_latency.csv'), 'w');
+fprintf(fid, csv_header);
+for si = 1:nSubj
+    fprintf(fid, '%s,%.1f,%.1f,%.1f\n', SubjNames{si}, P3_lat(si,1), P3_lat(si,2), P3_lat(si,3));
+end
+fclose(fid);
+fprintf('P3 峰值潜伏期已导出至: %s\n', fullfile(file_path, 'P3_peak_latency.csv'));
 
 fprintf('\n====== 所有分析完成！ ======\n');
