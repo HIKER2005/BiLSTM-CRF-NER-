@@ -149,15 +149,20 @@ for i = 1:nSubj
         end
     end
     
+    %% ---- 辅助函数：将事件类型统一转为数值 ----
+    % （定义为内联逻辑，在下面多处使用）
+    
     %% ---- 判断数据类型：连续 or 已分段 ----
-    if ndims(EEG.data) == 2  % 连续数据，需要创建复合标记并分段
-        fprintf('  检测到连续数据，正在创建复合标记...\n');
+    is_epoched = (ndims(EEG.data) == 3);
+    
+    if ~is_epoched
+        %% ============ 情况A: 连续数据 ============
+        fprintf('  检测到连续数据，正在创建复合标记并分段...\n');
         
         nevents = length(EEG.event);
-        trial_count = zeros(1, 6); % 记录各条件的试次数 [A正确,B正确,C正确,A错误,B错误,C错误]
+        trial_count = zeros(1, 6);
         
         for ev = 1:nevents
-            % 获取当前事件类型（统一转换为数值）
             current_type = EEG.event(ev).type;
             if ischar(current_type) || isstring(current_type)
                 current_type_num = str2double(current_type);
@@ -165,117 +170,168 @@ for i = 1:nSubj
                 current_type_num = current_type;
             end
             
-            % 仅处理"有目标"标记（41）
             if current_type_num == target_marker
-                
-                % —— 向前查找：找到最近的刺激类型标记（11/21/31）——
+                % 向前查找刺激类型
                 stim_type = NaN;
                 for prev_ev = (ev - 1):-1:1
-                    prev_type = EEG.event(prev_ev).type;
-                    if ischar(prev_type) || isstring(prev_type)
-                        prev_type_num = str2double(prev_type);
-                    else
-                        prev_type_num = prev_type;
-                    end
-                    
-                    if ismember(prev_type_num, stim_markers)
-                        stim_type = prev_type_num;
-                        break;
-                    end
-                    % 如果遇到另一个搜索任务标记，说明序列断裂，停止查找
-                    if ismember(prev_type_num, [target_marker, no_target_marker])
-                        break;
-                    end
+                    pt = EEG.event(prev_ev).type;
+                    if ischar(pt)||isstring(pt), pt = str2double(pt); end
+                    if ismember(pt, stim_markers), stim_type = pt; break; end
+                    if ismember(pt, [target_marker, no_target_marker]), break; end
                 end
-                
-                % —— 向后查找：找到最近的反应标记（12/22/32）——
+                % 向后查找反应类型
                 resp_type = NaN;
                 for next_ev = (ev + 1):nevents
-                    next_type = EEG.event(next_ev).type;
-                    if ischar(next_type) || isstring(next_type)
-                        next_type_num = str2double(next_type);
-                    else
-                        next_type_num = next_type;
-                    end
-                    
-                    if ismember(next_type_num, response_markers)
-                        resp_type = next_type_num;
-                        break;
-                    end
-                    % 如果遇到下一个刺激或搜索标记，说明该试次无反应或序列断裂
-                    if ismember(next_type_num, [stim_markers, target_marker, no_target_marker])
-                        break;
-                    end
+                    nt = EEG.event(next_ev).type;
+                    if ischar(nt)||isstring(nt), nt = str2double(nt); end
+                    if ismember(nt, response_markers), resp_type = nt; break; end
+                    if ismember(nt, [stim_markers, target_marker, no_target_marker]), break; end
                 end
-                
-                % —— 根据刺激类型和反应类型创建复合标记 ——
-                % 编码规则：百位=刺激编号(1/2/3), 个位=反应编号(1=正确,2=错误,3=无反应)
+                % 创建复合标记
                 if ~isnan(stim_type)
-                    stim_code = stim_type / 10;  % 11->1, 21->2, 31->3
-                    
-                    if resp_type == correct_marker
-                        resp_code = 1;
-                    elseif resp_type == incorrect_marker
-                        resp_code = 2;
-                    elseif resp_type == no_response_marker
-                        resp_code = 3;
-                    else
-                        resp_code = 0; % 未知反应
-                    end
-                    
+                    stim_code = stim_type / 10;
+                    if resp_type == correct_marker, resp_code = 1;
+                    elseif resp_type == incorrect_marker, resp_code = 2;
+                    elseif resp_type == no_response_marker, resp_code = 3;
+                    else, resp_code = 0; end
                     if resp_code > 0
-                        new_marker = stim_code * 100 + resp_code;
-                        EEG.event(ev).type = new_marker;
-                        
-                        % 统计试次数
+                        EEG.event(ev).type = stim_code * 100 + resp_code;
                         if stim_code <= 3 && resp_code <= 2
-                            trial_count((stim_code - 1) * 2 + resp_code) = ...
-                                trial_count((stim_code - 1) * 2 + resp_code) + 1;
+                            trial_count((stim_code-1)*2 + resp_code) = trial_count((stim_code-1)*2 + resp_code) + 1;
                         end
                     end
                 end
             end
         end
         
-        % 打印试次统计
         fprintf('  被试 %d (%s) 试次统计:\n', i, file_name);
         fprintf('    A正确: %d, B正确: %d, C正确: %d\n', trial_count(1), trial_count(3), trial_count(5));
         fprintf('    A错误: %d, B错误: %d, C错误: %d\n', trial_count(2), trial_count(4), trial_count(6));
         
-        % 确定需要提取的所有复合标记
-        all_markers_to_epoch = Cond_markers;
-        
-        % 分段：以复合标记时间点为 0 点
-        EEG = pop_epoch(EEG, num2cell(all_markers_to_epoch), epoch_window, ...
+        EEG = pop_epoch(EEG, num2cell(Cond_markers), epoch_window, ...
             'newname', [file_name '_epoched'], 'epochinfo', 'yes');
-        
-        % 基线校正
         EEG = pop_rmbase(EEG, baseline_window);
-        
         fprintf('  分段完成，共 %d 个 epoch\n', EEG.trials);
         
-    else  % 数据已经分段（假设已经围绕 41 标记分段）
-        fprintf('  检测到已分段数据（%d trials），将直接根据事件筛选...\n', EEG.trials);
-        % 注意：如果数据已经分段但没有复合标记，你需要先在预处理阶段创建复合标记
-        % 或者确保数据中已包含复合标记（101,201,301等）
-    end
-    
-    %% ---- 按条件提取 epoch 并计算平均 ----
-    for j = 1:nCond
-        EEG_temp = EEG;
+        % 按条件提取（连续数据已创建复合标记，可用 pop_selectevent）
+        for j = 1:nCond
+            EEG_temp = pop_selectevent(EEG, 'type', Cond_markers(j), ...
+                'deleteevents', 'off', 'deleteepochs', 'on', 'invertepochs', 'off');
+            fprintf('  条件 %s (标记 %d): %d 个 epoch\n', Cond_names{j}, Cond_markers(j), EEG_temp.trials);
+            if EEG_temp.trials > 0
+                data(i, j, :, :) = squeeze(mean(EEG_temp.data, 3));
+            else
+                warning('  被试 %d 条件 %s 无有效 epoch！', i, Cond_names{j});
+                data(i, j, :, :) = zeros(EEG.nbchan, EEG.pnts);
+            end
+        end
         
-        % 根据复合标记选择特定条件的 epoch
-        EEG_temp = pop_selectevent(EEG_temp, 'type', Cond_markers(j), ...
-            'deleteevents', 'off', 'deleteepochs', 'on', 'invertepochs', 'off');
+    else
+        %% ============ 情况B: 已分段数据 ============
+        fprintf('  检测到已分段数据（%d trials），正在分析事件结构...\n', EEG.trials);
         
-        fprintf('  条件 %s (标记 %d): %d 个 epoch\n', Cond_names{j}, Cond_markers(j), EEG_temp.trials);
+        % ---- Step 1: 诊断 - 统计每个epoch的锁时事件（latency=0的事件）----
+        time_lock_types = zeros(1, EEG.trials);
+        for ep = 1:EEG.trials
+            ep_types = EEG.epoch(ep).eventtype;
+            ep_lats = EEG.epoch(ep).eventlatency;
+            % eventlatency 可能是 cell 或 数组
+            if iscell(ep_lats)
+                lats = cellfun(@(x) x, ep_lats);
+            else
+                lats = ep_lats;
+            end
+            [~, zero_idx] = min(abs(lats));
+            if iscell(ep_types)
+                tl = ep_types{zero_idx};
+            else
+                tl = ep_types(zero_idx);
+            end
+            if ischar(tl)||isstring(tl), tl = str2double(tl); end
+            time_lock_types(ep) = tl;
+        end
         
-        if EEG_temp.trials > 0
-            % data 为 subj × cond × channel × timepoints 的四维数组
-            data(i, j, :, :) = squeeze(mean(EEG_temp.data, 3));
-        else
-            warning('  被试 %d (%s) 条件 %s 无有效 epoch！', i, file_name, Cond_names{j});
-            data(i, j, :, :) = zeros(EEG.nbchan, EEG.pnts);
+        unique_tl = unique(time_lock_types);
+        fprintf('  锁时事件类型统计:\n');
+        for ut = 1:length(unique_tl)
+            fprintf('    标记 %g: %d 个 epoch\n', unique_tl(ut), sum(time_lock_types == unique_tl(ut)));
+        end
+        
+        % ---- Step 2: 为每个epoch分配条件编码 ----
+        epoch_condition = zeros(1, EEG.trials);  % 0=未分配
+        
+        % 方法：遍历全局 EEG.event 列表，找到 type=41 的事件，
+        % 向前找刺激类型，向后找反应类型，然后标记该事件所在的epoch
+        nevents = length(EEG.event);
+        
+        for ev = 1:nevents
+            % 获取事件类型
+            et = EEG.event(ev).type;
+            if ischar(et)||isstring(et), et_num = str2double(et); else, et_num = et; end
+            
+            if et_num ~= target_marker, continue; end  % 只处理 41 事件
+            
+            % 获取该事件所在的 epoch 编号
+            if ~isfield(EEG.event, 'epoch'), continue; end
+            ep_num = EEG.event(ev).epoch;
+            
+            % 检查这个41事件是否是该epoch的锁时事件（latency≈0）
+            if time_lock_types(ep_num) ~= target_marker, continue; end
+            
+            % 向前查找最近的刺激类型标记（11/21/31）
+            stim_code = 0;
+            for prev_ev = (ev - 1):-1:1
+                pt = EEG.event(prev_ev).type;
+                if ischar(pt)||isstring(pt), pt = str2double(pt); end
+                if ismember(pt, stim_markers)
+                    stim_code = pt / 10;  % 11->1, 21->2, 31->3
+                    break;
+                end
+                if ismember(pt, [target_marker, no_target_marker]), break; end
+            end
+            
+            % 向后查找最近的反应标记（12/22/32）
+            resp_code = 0;
+            for next_ev = (ev + 1):nevents
+                nt = EEG.event(next_ev).type;
+                if ischar(nt)||isstring(nt), nt = str2double(nt); end
+                if nt == correct_marker, resp_code = 1; break; end
+                if nt == incorrect_marker, resp_code = 2; break; end
+                if nt == no_response_marker, resp_code = 3; break; end
+                if ismember(nt, [stim_markers, target_marker, no_target_marker]), break; end
+            end
+            
+            % 分配条件编码
+            if stim_code > 0 && resp_code > 0
+                epoch_condition(ep_num) = stim_code * 100 + resp_code;
+            end
+        end
+        
+        % 打印条件分配统计
+        fprintf('  条件分配统计（以标记41为锁时点的epoch）:\n');
+        for c = 1:length(Cond_markers)
+            n_ep = sum(epoch_condition == Cond_markers(c));
+            fprintf('    %s (编码 %d): %d 个 epoch\n', Cond_names{c}, Cond_markers(c), n_ep);
+        end
+        n_unassigned_41 = sum(time_lock_types == target_marker & epoch_condition == 0);
+        if n_unassigned_41 > 0
+            fprintf('    未能分配条件的41-epoch: %d 个\n', n_unassigned_41);
+        end
+        n_non41 = sum(time_lock_types ~= target_marker);
+        fprintf('    非41锁时的epoch（已忽略）: %d 个\n', n_non41);
+        
+        % ---- Step 3: 按条件选择epoch并计算平均 ----
+        for j = 1:nCond
+            cond_epoch_idx = find(epoch_condition == Cond_markers(j));
+            fprintf('  条件 %s (编码 %d): %d 个 epoch\n', Cond_names{j}, Cond_markers(j), length(cond_epoch_idx));
+            
+            if ~isempty(cond_epoch_idx)
+                EEG_temp = pop_select(EEG, 'trial', cond_epoch_idx);
+                data(i, j, :, :) = squeeze(mean(EEG_temp.data, 3));
+            else
+                warning('  被试 %d (%s) 条件 %s 无有效 epoch！', i, file_name, Cond_names{j});
+                data(i, j, :, :) = zeros(EEG.nbchan, EEG.pnts);
+            end
         end
     end
 end
