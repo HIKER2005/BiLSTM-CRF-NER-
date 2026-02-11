@@ -455,6 +455,9 @@ fprintf('data 维度: %s (被试 × 条件 × 电极 × 时间点)\n', mat2str(s
 colors_correct = {'b', [0 0.6 0], 'r'};  % A=蓝, B=绿, C=红
 nChans = length(chans_of_interest);
 
+% 统一显示时间范围（毫秒）
+disp_xlim = [epoch_window(1)*1000, epoch_window(2)*1000];  % [-100, 800]
+
 %% ---- 2.1 所有电极三种正确条件对比波形（子图拼接）----
 figure('Name', '多电极三种正确条件对比波形', 'NumberTitle', 'off', ...
     'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
@@ -469,6 +472,7 @@ for ci = 1:nChans
         plot(EEG.times, squeeze(mean(data(:, c, ch, :), 1)), ...
             'Color', colors_correct{c}, 'LineWidth', 1.5);
     end
+    xlim(disp_xlim);
     line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
     line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
     title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
@@ -498,6 +502,7 @@ if include_error && nCond >= 6
             plot(EEG.times, squeeze(mean(data(:, c, ch, :), 1)), ...
                 'Color', colors_correct{c-3}, 'LineWidth', 1.5, 'LineStyle', '--');
         end
+        xlim(disp_xlim);
         line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
         line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
         title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
@@ -522,6 +527,7 @@ for ci = 1:nChans
     diff_CA = squeeze(mean(data(:,3,ch,:),1)) - squeeze(mean(data(:,1,ch,:),1));
     plot(EEG.times, diff_BA, 'Color', [0 0.6 0], 'LineWidth', 1.5);
     plot(EEG.times, diff_CA, '-r', 'LineWidth', 1.5);
+    xlim(disp_xlim);
     line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
     line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
     title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
@@ -825,6 +831,7 @@ for ci = 1:nChans
     plot(EEG.times, squeeze(mean(data(:,1,ch,:),1)), '-b', 'LineWidth', 1.2);
     plot(EEG.times, squeeze(mean(data(:,2,ch,:),1)), 'Color', [0 0.6 0], 'LineWidth', 1.2);
     plot(EEG.times, squeeze(mean(data(:,3,ch,:),1)), '-r', 'LineWidth', 1.2);
+    xlim(disp_xlim);
     line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
     title(ch_name, 'fontsize', 12, 'FontWeight', 'bold');
     if ci == 1, ylabel('\muV'); end
@@ -835,9 +842,9 @@ for ci = 1:nChans
     % 下排：p 值
     subplot(2, nChans, nChans + ci); hold on;
     plot(EEG.times, all_P_vals{ci}, 'b', 'LineWidth', 1);
-    line([EEG.times(1) EEG.times(end)], [0.05 0.05], 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
-    line([EEG.times(1) EEG.times(end)], [all_p_fdr(ci) all_p_fdr(ci)], 'Color', 'r', 'LineWidth', 1.5);
-    ylim([0 0.1]);
+    line(disp_xlim, [0.05 0.05], 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
+    line(disp_xlim, [all_p_fdr(ci) all_p_fdr(ci)], 'Color', 'r', 'LineWidth', 1.5);
+    xlim(disp_xlim); ylim([0 0.1]);
     title(sprintf('p值 (FDR=%.4f)', all_p_fdr(ci)), 'fontsize', 10);
     if ci == 1, ylabel('p value'); end
     xlabel('ms');
