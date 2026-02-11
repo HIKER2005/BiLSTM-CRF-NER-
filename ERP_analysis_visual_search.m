@@ -230,80 +230,144 @@ for i = 1:nSubj
         %% ============ 情况B: 已分段数据 ============
         fprintf('  检测到已分段数据（%d trials），正在分析事件结构...\n', EEG.trials);
         
-        % ---- Step 1: 诊断 - 统计每个epoch的锁时事件（latency=0的事件）----
+        % ---- Step 1: 获取每个epoch的锁时事件类型 和 epoch内所有事件信息 ----
         time_lock_types = zeros(1, EEG.trials);
+        
         for ep = 1:EEG.trials
             ep_types = EEG.epoch(ep).eventtype;
-            ep_lats = EEG.epoch(ep).eventlatency;
-            % eventlatency 可能是 cell 或 数组
+            ep_lats  = EEG.epoch(ep).eventlatency;
+            
+            % eventlatency 可能是 cell 或数组，统一处理
             if iscell(ep_lats)
-                lats = cellfun(@(x) x, ep_lats);
+                lats = cellfun(@(x) double(x), ep_lats);
             else
-                lats = ep_lats;
+                lats = double(ep_lats);
             end
+            
+            % 找到 latency 最接近 0 的事件作为锁时事件
             [~, zero_idx] = min(abs(lats));
             if iscell(ep_types)
                 tl = ep_types{zero_idx};
             else
                 tl = ep_types(zero_idx);
             end
-            if ischar(tl)||isstring(tl), tl = str2double(tl); end
+            if ischar(tl) || isstring(tl), tl = str2double(tl); end
             time_lock_types(ep) = tl;
         end
         
+        % 打印锁时事件统计
         unique_tl = unique(time_lock_types);
         fprintf('  锁时事件类型统计:\n');
         for ut = 1:length(unique_tl)
             fprintf('    标记 %g: %d 个 epoch\n', unique_tl(ut), sum(time_lock_types == unique_tl(ut)));
         end
         
-        % ---- Step 2: 为每个epoch分配条件编码 ----
+        % 打印第一个41-locked epoch的内部事件（调试用）
+        first41 = find(time_lock_types == target_marker, 1);
+        if ~isempty(first41)
+            fprintf('  [调试] 第一个41-epoch (ep=%d) 内的事件:\n', first41);
+            ep_types = EEG.epoch(first41).eventtype;
+            ep_lats  = EEG.epoch(first41).eventlatency;
+            nev_debug = length(ep_types);
+            for kk = 1:nev_debug
+                if iscell(ep_types), tt = ep_types{kk}; else, tt = ep_types(kk); end
+                if iscell(ep_lats),  ll = ep_lats{kk};  else, ll = ep_lats(kk);  end
+                fprintf('    事件: type=%s, latency=%.1fms\n', num2str(tt), ll);
+            end
+        end
+        
+        % ---- Step 2: 为每个41-locked epoch分配条件 ----
+        % 策略：
+        %   反应类型 → 在当前epoch的事件列表中，查找latency>0的12/22/32
+        %   刺激类型 → 先查当前epoch事件列表(latency<0的11/21/31)
+        %              若找不到，再按epoch时间顺序向前查找前面epoch的锁时事件
+        %              (因为epoch按时间排列，所以前面的epoch对应更早的事件)
+        
         epoch_condition = zeros(1, EEG.trials);  % 0=未分配
+        debug_no_stim = 0;
+        debug_no_resp = 0;
         
-        % 方法：遍历全局 EEG.event 列表，找到 type=41 的事件，
-        % 向前找刺激类型，向后找反应类型，然后标记该事件所在的epoch
-        nevents = length(EEG.event);
-        
-        for ev = 1:nevents
-            % 获取事件类型
-            et = EEG.event(ev).type;
-            if ischar(et)||isstring(et), et_num = str2double(et); else, et_num = et; end
+        for ep = 1:EEG.trials
+            % 只处理以41为锁时点的epoch
+            if time_lock_types(ep) ~= target_marker
+                continue;
+            end
             
-            if et_num ~= target_marker, continue; end  % 只处理 41 事件
+            % 获取当前epoch内所有事件的类型和潜伏期
+            ep_types = EEG.epoch(ep).eventtype;
+            ep_lats  = EEG.epoch(ep).eventlatency;
+            nev = length(ep_types);
             
-            % 获取该事件所在的 epoch 编号
-            if ~isfield(EEG.event, 'epoch'), continue; end
-            ep_num = EEG.event(ev).epoch;
+            % 转换为数值数组
+            types_num = nan(1, nev);
+            lats_num  = nan(1, nev);
+            for k = 1:nev
+                if iscell(ep_types), t = ep_types{k}; else, t = ep_types(k); end
+                if ischar(t) || isstring(t), t = str2double(t); end
+                types_num(k) = t;
+                if iscell(ep_lats), lats_num(k) = double(ep_lats{k}); else, lats_num(k) = double(ep_lats(k)); end
+            end
             
-            % 检查这个41事件是否是该epoch的锁时事件（latency≈0）
-            if time_lock_types(ep_num) ~= target_marker, continue; end
+            % ---- 查找反应类型（在当前epoch内，latency > 0）----
+            resp_code = 0;
+            % 先找epoch内 latency > 0 的反应标记
+            resp_events_idx = find(lats_num > 0);
+            for ri = 1:length(resp_events_idx)
+                k = resp_events_idx(ri);
+                if types_num(k) == correct_marker,     resp_code = 1; break; end
+                if types_num(k) == incorrect_marker,    resp_code = 2; break; end
+                if types_num(k) == no_response_marker,  resp_code = 3; break; end
+            end
             
-            % 向前查找最近的刺激类型标记（11/21/31）
+            % 如果epoch内没找到反应，向后查找后续epoch的锁时事件
+            if resp_code == 0
+                for next_ep = (ep + 1):min(EEG.trials, ep + 5)
+                    tl_next = time_lock_types(next_ep);
+                    if tl_next == correct_marker,     resp_code = 1; break; end
+                    if tl_next == incorrect_marker,    resp_code = 2; break; end
+                    if tl_next == no_response_marker,  resp_code = 3; break; end
+                    % 碰到下一个刺激或搜索标记就停止
+                    if ismember(tl_next, [stim_markers, target_marker, no_target_marker])
+                        break;
+                    end
+                end
+            end
+            
+            % ---- 查找刺激类型 ----
             stim_code = 0;
-            for prev_ev = (ev - 1):-1:1
-                pt = EEG.event(prev_ev).type;
-                if ischar(pt)||isstring(pt), pt = str2double(pt); end
-                if ismember(pt, stim_markers)
-                    stim_code = pt / 10;  % 11->1, 21->2, 31->3
+            
+            % 方法1: 在当前epoch事件列表中查找 latency < 0 的刺激标记
+            stim_events_idx = find(lats_num < 0);
+            for si_k = 1:length(stim_events_idx)
+                k = stim_events_idx(si_k);
+                if ismember(types_num(k), stim_markers)
+                    stim_code = types_num(k) / 10;  % 11->1, 21->2, 31->3
                     break;
                 end
-                if ismember(pt, [target_marker, no_target_marker]), break; end
             end
             
-            % 向后查找最近的反应标记（12/22/32）
-            resp_code = 0;
-            for next_ev = (ev + 1):nevents
-                nt = EEG.event(next_ev).type;
-                if ischar(nt)||isstring(nt), nt = str2double(nt); end
-                if nt == correct_marker, resp_code = 1; break; end
-                if nt == incorrect_marker, resp_code = 2; break; end
-                if nt == no_response_marker, resp_code = 3; break; end
-                if ismember(nt, [stim_markers, target_marker, no_target_marker]), break; end
+            % 方法2: 如果epoch内没找到刺激，按epoch顺序向前查找
+            % (epochs 按原始时间排列，前一个epoch的锁时事件对应更早的事件)
+            if stim_code == 0
+                for prev_ep = (ep - 1):-1:max(1, ep - 15)
+                    tl_prev = time_lock_types(prev_ep);
+                    if ismember(tl_prev, stim_markers)
+                        stim_code = tl_prev / 10;
+                        break;
+                    end
+                    % 碰到另一个搜索标记(41/42)就停止，说明跨试次了
+                    if ismember(tl_prev, [target_marker, no_target_marker])
+                        break;
+                    end
+                end
             end
             
-            % 分配条件编码
+            % ---- 分配条件编码 ----
             if stim_code > 0 && resp_code > 0
-                epoch_condition(ep_num) = stim_code * 100 + resp_code;
+                epoch_condition(ep) = stim_code * 100 + resp_code;
+            else
+                if stim_code == 0, debug_no_stim = debug_no_stim + 1; end
+                if resp_code == 0, debug_no_resp = debug_no_resp + 1; end
             end
         end
         
@@ -315,7 +379,8 @@ for i = 1:nSubj
         end
         n_unassigned_41 = sum(time_lock_types == target_marker & epoch_condition == 0);
         if n_unassigned_41 > 0
-            fprintf('    未能分配条件的41-epoch: %d 个\n', n_unassigned_41);
+            fprintf('    未能分配条件的41-epoch: %d 个 (找不到刺激: %d, 找不到反应: %d)\n', ...
+                n_unassigned_41, debug_no_stim, debug_no_resp);
         end
         n_non41 = sum(time_lock_types ~= target_marker);
         fprintf('    非41锁时的epoch（已忽略）: %d 个\n', n_non41);
@@ -759,37 +824,25 @@ for si = 1:nSubj
 end
 
 % N2 平均振幅
-T_N2 = table();
-T_N2.Subject = SubjNames;
-for c = 1:3
-    T_N2.(Cond_names{c}) = N2_mean_amp(:, c);
-end
+T_N2 = table(SubjNames, N2_mean_amp(:,1), N2_mean_amp(:,2), N2_mean_amp(:,3), ...
+    'VariableNames', {'Subject', Cond_names{1}, Cond_names{2}, Cond_names{3}});
 writetable(T_N2, fullfile(file_path, 'N2_mean_amplitude.csv'));
 fprintf('N2 平均振幅已导出至: %s\n', fullfile(file_path, 'N2_mean_amplitude.csv'));
 
 % P3 平均振幅
-T_P3 = table();
-T_P3.Subject = SubjNames;
-for c = 1:3
-    T_P3.(Cond_names{c}) = P3_mean_amp(:, c);
-end
+T_P3 = table(SubjNames, P3_mean_amp(:,1), P3_mean_amp(:,2), P3_mean_amp(:,3), ...
+    'VariableNames', {'Subject', Cond_names{1}, Cond_names{2}, Cond_names{3}});
 writetable(T_P3, fullfile(file_path, 'P3_mean_amplitude.csv'));
 fprintf('P3 平均振幅已导出至: %s\n', fullfile(file_path, 'P3_mean_amplitude.csv'));
 
 % N2 峰值潜伏期
-T_N2_lat = table();
-T_N2_lat.Subject = SubjNames;
-for c = 1:3
-    T_N2_lat.(Cond_names{c}) = N2_lat(:, c);
-end
+T_N2_lat = table(SubjNames, N2_lat(:,1), N2_lat(:,2), N2_lat(:,3), ...
+    'VariableNames', {'Subject', Cond_names{1}, Cond_names{2}, Cond_names{3}});
 writetable(T_N2_lat, fullfile(file_path, 'N2_peak_latency.csv'));
 
 % P3 峰值潜伏期
-T_P3_lat = table();
-T_P3_lat.Subject = SubjNames;
-for c = 1:3
-    T_P3_lat.(Cond_names{c}) = P3_lat(:, c);
-end
+T_P3_lat = table(SubjNames, P3_lat(:,1), P3_lat(:,2), P3_lat(:,3), ...
+    'VariableNames', {'Subject', Cond_names{1}, Cond_names{2}, Cond_names{3}});
 writetable(T_P3_lat, fullfile(file_path, 'P3_peak_latency.csv'));
 
 fprintf('\n====== 所有分析完成！ ======\n');
