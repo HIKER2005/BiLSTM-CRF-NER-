@@ -115,10 +115,14 @@ if include_error
     nCond = length(Cond_markers);
 end
 
-% 感兴趣电极（根据你的电极布局修改）
-% 常见选择：Cz, Pz, Oz, PO7, PO8 等
-chan_of_interest = 'Cz';                %%% 感兴趣电极名称
-chan_idx = [];                          % 稍后自动查找索引
+% 感兴趣电极列表（可以指定多个电极，将分别出图和统计）
+% 常见选择：Fz, Cz, Pz, Oz, PO7, PO8, P3, P4, O1, O2 等
+chans_of_interest = {'Fz', 'Cz', 'Pz', 'Oz', 'PO7', 'PO8'};  %%% 修改为你想查看的电极列表
+chan_indices = [];                      % 稍后自动查找索引
+
+% 兼容旧变量名（后续部分画图代码用）
+chan_of_interest = chans_of_interest{1};  % 默认第一个电极
+chan_idx = [];
 
 %% ========================= Part 1: 复合标记创建与分段 =========================
 fprintf('\n====== 开始处理数据 ======\n');
@@ -137,20 +141,32 @@ for i = 1:nSubj
     
     EEG = pop_loadset('filename', file_name, 'filepath', file_path);
     
-    % 第一次成功加载时查找感兴趣电极的索引
-    if isempty(chan_idx)
-        for ch = 1:length(EEG.chanlocs)
-            if strcmpi(EEG.chanlocs(ch).labels, chan_of_interest)
-                chan_idx = ch;
-                break;
+    % 第一次成功加载时查找所有感兴趣电极的索引
+    if isempty(chan_indices)
+        fprintf('查找感兴趣电极:\n');
+        all_labels = {EEG.chanlocs.labels};
+        chan_indices = zeros(1, length(chans_of_interest));
+        for ci = 1:length(chans_of_interest)
+            found = find(strcmpi(all_labels, chans_of_interest{ci}));
+            if ~isempty(found)
+                chan_indices(ci) = found(1);
+                fprintf('  %s -> 索引 %d\n', chans_of_interest{ci}, chan_indices(ci));
+            else
+                warning('未找到电极 %s！', chans_of_interest{ci});
+                chan_indices(ci) = 0;  % 标记未找到
             end
         end
-        if isempty(chan_idx)
-            warning('未找到电极 %s，将使用第1个电极！请检查电极名称。', chan_of_interest);
-            chan_idx = 1;
-        else
-            fprintf('找到电极 %s，索引编号为 %d\n', chan_of_interest, chan_idx);
+        % 移除未找到的电极
+        valid = chan_indices > 0;
+        chans_of_interest = chans_of_interest(valid);
+        chan_indices = chan_indices(valid);
+        if isempty(chan_indices)
+            error('没有找到任何指定的电极，请检查 chans_of_interest 中的电极名称！');
         end
+        fprintf('共找到 %d 个有效电极\n', length(chan_indices));
+        % 兼容旧变量
+        chan_of_interest = chans_of_interest{1};
+        chan_idx = chan_indices(1);
     end
     
     %% ---- 辅助函数：将事件类型统一转为数值 ----
@@ -425,87 +441,97 @@ EEG.chanlocs = chanloc;
 
 % 保存数据
 save_path = fullfile(file_path, 'all_data.mat');
-save(save_path, 'data', 'EEG', 'Subj', 'SubjFiles', 'Cond_names', 'Cond_markers', 'chan_idx', 'chan_of_interest');
+save(save_path, 'data', 'EEG', 'Subj', 'SubjFiles', 'Cond_names', 'Cond_markers', ...
+    'chan_idx', 'chan_of_interest', 'chan_indices', 'chans_of_interest');
 fprintf('\n数据已保存至: %s\n', save_path);
 fprintf('data 维度: %s (被试 × 条件 × 电极 × 时间点)\n', mat2str(size(data)));
 
 %% ========================================================================
-%% ========================= Part 2: 画波形图 =============================
+%% ========================= Part 2: 画波形图（多电极）====================
 %% ========================================================================
 % 以下画图部分使用保存好的 data，可以直接 load 后运行
-% load([file_path 'all_data.mat']);
+% load(fullfile(file_path, 'all_data.mat'));
 
-%% ---- 2.1 所有条件总平均波形图（感兴趣电极）----
-figure('Name', '所有条件总平均波形', 'NumberTitle', 'off');
-plot(EEG.times, squeeze(mean(mean(data(:, 1:3, chan_idx, :), 1), 2)), '-r', 'LineWidth', 1.5);
-set(gca, 'YDir', 'reverse');  % 负极朝上
-title(sprintf('Group-level %s waveform (all correct conditions)', chan_of_interest), 'fontsize', 14);
-xlabel('Latency (ms)', 'fontsize', 14);
-ylabel('Amplitude (\\muV)', 'fontsize', 14);
-line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');  % 刺激出现时刻的竖线
-line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');   % 零线
-box off;
-
-%% ---- 2.2 三种正确反应条件的波形对比图 ----
 colors_correct = {'b', [0 0.6 0], 'r'};  % A=蓝, B=绿, C=红
-figure('Name', '三种正确条件对比波形', 'NumberTitle', 'off');
-hold on;
-set(gca, 'YDir', 'reverse');
-for c = 1:3
-    plot(EEG.times, squeeze(mean(data(:, c, chan_idx, :), 1)), ...
-        'Color', colors_correct{c}, 'LineWidth', 1.5);
-end
-line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
-line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
-legend('A刺激-正确', 'B刺激-正确', 'C刺激-正确', 'Location', 'best');
-title(sprintf('Group-level %s waveforms by stimulus type (correct)', chan_of_interest), 'fontsize', 14);
-xlabel('Latency (ms)', 'fontsize', 14);
-ylabel('Amplitude (\\muV)', 'fontsize', 14);
-box off;
+nChans = length(chans_of_interest);
 
-%% ---- 2.3 如果包含错误条件，画正确 vs 错误对比 ----
-if include_error && nCond >= 6
-    figure('Name', '正确 vs 错误反应对比', 'NumberTitle', 'off');
-    hold on;
-    set(gca, 'YDir', 'reverse');
-    
-    % 正确条件（实线）
+%% ---- 2.1 所有电极三种正确条件对比波形（子图拼接）----
+figure('Name', '多电极三种正确条件对比波形', 'NumberTitle', 'off', ...
+    'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
+nRows = ceil(nChans / 3);
+nCols = min(nChans, 3);
+
+for ci = 1:nChans
+    ch = chan_indices(ci);
+    subplot(nRows, nCols, ci);
+    hold on; set(gca, 'YDir', 'reverse');
     for c = 1:3
-        plot(EEG.times, squeeze(mean(data(:, c, chan_idx, :), 1)), ...
-            'Color', colors_correct{c}, 'LineWidth', 1.5, 'LineStyle', '-');
+        plot(EEG.times, squeeze(mean(data(:, c, ch, :), 1)), ...
+            'Color', colors_correct{c}, 'LineWidth', 1.5);
     end
-    % 错误条件（虚线）
-    for c = 4:6
-        plot(EEG.times, squeeze(mean(data(:, c, chan_idx, :), 1)), ...
-            'Color', colors_correct{c - 3}, 'LineWidth', 1.5, 'LineStyle', '--');
-    end
-    
     line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
     line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
-    legend('A-正确','B-正确','C-正确','A-错误','B-错误','C-错误', 'Location', 'best');
-    title(sprintf('Group-level %s: Correct vs Incorrect', chan_of_interest), 'fontsize', 14);
-    xlabel('Latency (ms)', 'fontsize', 14);
-    ylabel('Amplitude (\\muV)', 'fontsize', 14);
+    title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
+    xlabel('ms'); ylabel('\muV');
+    if ci == 1
+        legend('A-正确', 'B-正确', 'C-正确', 'Location', 'best', 'FontSize', 8);
+    end
     box off;
 end
+sgtitle('三种刺激条件组平均波形 (正确反应)', 'fontsize', 15, 'FontWeight', 'bold');
 
-%% ---- 2.4 差异波（以 C-A 和 B-A 为例）----
-figure('Name', '差异波', 'NumberTitle', 'off');
-hold on;
-set(gca, 'YDir', 'reverse');
+%% ---- 2.2 如果包含错误条件，所有电极正确 vs 错误对比 ----
+if include_error && nCond >= 6
+    figure('Name', '多电极正确 vs 错误对比', 'NumberTitle', 'off', ...
+        'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
+    for ci = 1:nChans
+        ch = chan_indices(ci);
+        subplot(nRows, nCols, ci);
+        hold on; set(gca, 'YDir', 'reverse');
+        % 正确条件（实线）
+        for c = 1:3
+            plot(EEG.times, squeeze(mean(data(:, c, ch, :), 1)), ...
+                'Color', colors_correct{c}, 'LineWidth', 1.5, 'LineStyle', '-');
+        end
+        % 错误条件（虚线）
+        for c = 4:6
+            plot(EEG.times, squeeze(mean(data(:, c, ch, :), 1)), ...
+                'Color', colors_correct{c-3}, 'LineWidth', 1.5, 'LineStyle', '--');
+        end
+        line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
+        line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
+        title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
+        xlabel('ms'); ylabel('\muV');
+        if ci == 1
+            legend('A-正确','B-正确','C-正确','A-错误','B-错误','C-错误', ...
+                'Location', 'best', 'FontSize', 7);
+        end
+        box off;
+    end
+    sgtitle('正确 vs 错误反应对比 (实线=正确, 虚线=错误)', 'fontsize', 15, 'FontWeight', 'bold');
+end
 
-diff_BA = squeeze(mean(data(:, 2, chan_idx, :), 1)) - squeeze(mean(data(:, 1, chan_idx, :), 1));
-diff_CA = squeeze(mean(data(:, 3, chan_idx, :), 1)) - squeeze(mean(data(:, 1, chan_idx, :), 1));
-
-plot(EEG.times, diff_BA, '-g', 'LineWidth', 1.5);
-plot(EEG.times, diff_CA, '-r', 'LineWidth', 1.5);
-line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
-line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
-legend('B - A', 'C - A', 'Location', 'best');
-title(sprintf('Group-level difference waves at %s', chan_of_interest), 'fontsize', 14);
-xlabel('Latency (ms)', 'fontsize', 14);
-ylabel('Amplitude (\\muV)', 'fontsize', 14);
-box off;
+%% ---- 2.3 所有电极差异波 ----
+figure('Name', '多电极差异波', 'NumberTitle', 'off', ...
+    'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
+for ci = 1:nChans
+    ch = chan_indices(ci);
+    subplot(nRows, nCols, ci);
+    hold on; set(gca, 'YDir', 'reverse');
+    diff_BA = squeeze(mean(data(:,2,ch,:),1)) - squeeze(mean(data(:,1,ch,:),1));
+    diff_CA = squeeze(mean(data(:,3,ch,:),1)) - squeeze(mean(data(:,1,ch,:),1));
+    plot(EEG.times, diff_BA, 'Color', [0 0.6 0], 'LineWidth', 1.5);
+    plot(EEG.times, diff_CA, '-r', 'LineWidth', 1.5);
+    line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
+    line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
+    title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
+    xlabel('ms'); ylabel('\muV');
+    if ci == 1
+        legend('B-A', 'C-A', 'Location', 'best', 'FontSize', 9);
+    end
+    box off;
+end
+sgtitle('差异波 (B-A 和 C-A)', 'fontsize', 15, 'FontWeight', 'bold');
 
 %% ========================================================================
 %% ========================= Part 3: 地形图 ===============================
@@ -580,7 +606,7 @@ end
 %% ========================= Part 4: 峰值与潜伏期测量 =====================
 %% ========================================================================
 
-%% ---- 4.1 自动峰值检测：N2 和 P3 ----
+%% ---- 4.1 自动峰值检测：N2 和 P3（多电极）----
 % 定义检测时间窗口（毫秒）
 N2_search_window = [150 350];   %%% N2 搜索窗口，请根据波形调整
 P3_search_window = [250 600];   %%% P3 搜索窗口，请根据波形调整
@@ -589,113 +615,112 @@ P3_search_window = [250 600];   %%% P3 搜索窗口，请根据波形调整
 N2_win_idx = find(EEG.times >= N2_search_window(1) & EEG.times <= N2_search_window(2));
 P3_win_idx = find(EEG.times >= P3_search_window(1) & EEG.times <= P3_search_window(2));
 
-% 为每个被试每个条件提取 N2 和 P3 的振幅和潜伏期
-% 维度: 被试 × 条件
-N2_amp = zeros(nSubj, 3);
-N2_lat = zeros(nSubj, 3);
-P3_amp = zeros(nSubj, 3);
-P3_lat = zeros(nSubj, 3);
-
-for i = 1:nSubj
-    for c = 1:3  % 只对三个正确条件
-        wave = squeeze(data(i, c, chan_idx, :));
-        
-        % N2: 在搜索窗口内找极小值（负波峰）
-        [min_val, min_pos] = min(wave(N2_win_idx));
-        N2_amp(i, c) = min_val;
-        N2_lat(i, c) = EEG.times(N2_win_idx(min_pos));
-        
-        % P3: 在搜索窗口内找极大值（正波峰）
-        [max_val, max_pos] = max(wave(P3_win_idx));
-        P3_amp(i, c) = max_val;
-        P3_lat(i, c) = EEG.times(P3_win_idx(max_pos));
+% 为每个电极分别计算
+for ci = 1:nChans
+    ch = chan_indices(ci);
+    ch_name = chans_of_interest{ci};
+    
+    % 维度: 被试 × 条件
+    N2_amp = zeros(nSubj, 3);
+    N2_lat = zeros(nSubj, 3);
+    P3_amp = zeros(nSubj, 3);
+    P3_lat = zeros(nSubj, 3);
+    
+    for i = 1:nSubj
+        for c = 1:3  % 只对三个正确条件
+            wave = squeeze(data(i, c, ch, :));
+            
+            % N2: 在搜索窗口内找极小值（负波峰）
+            [min_val, min_pos] = min(wave(N2_win_idx));
+            N2_amp(i, c) = min_val;
+            N2_lat(i, c) = EEG.times(N2_win_idx(min_pos));
+            
+            % P3: 在搜索窗口内找极大值（正波峰）
+            [max_val, max_pos] = max(wave(P3_win_idx));
+            P3_amp(i, c) = max_val;
+            P3_lat(i, c) = EEG.times(P3_win_idx(max_pos));
+        end
     end
-end
-
-% 打印结果
-fprintf('\n====== N2 振幅和潜伏期 (电极: %s) ======\n', chan_of_interest);
-fprintf('条件\t\t平均振幅(uV)\t标准差\t\t平均潜伏期(ms)\t标准差\n');
-for c = 1:3
-    fprintf('%s\t%.2f\t\t%.2f\t\t%.1f\t\t%.1f\n', ...
-        Cond_names{c}, mean(N2_amp(:,c)), std(N2_amp(:,c)), ...
-        mean(N2_lat(:,c)), std(N2_lat(:,c)));
-end
-
-fprintf('\n====== P3 振幅和潜伏期 (电极: %s) ======\n', chan_of_interest);
-fprintf('条件\t\t平均振幅(uV)\t标准差\t\t平均潜伏期(ms)\t标准差\n');
-for c = 1:3
-    fprintf('%s\t%.2f\t\t%.2f\t\t%.1f\t\t%.1f\n', ...
-        Cond_names{c}, mean(P3_amp(:,c)), std(P3_amp(:,c)), ...
-        mean(P3_lat(:,c)), std(P3_lat(:,c)));
-end
-
-%% ---- 4.2 平均振幅测量（用于统计分析更稳健）----
-% 在成分峰值前后一个时间窗口内取平均振幅，比单点峰值更稳健
-N2_mean_amp = zeros(nSubj, 3);
-P3_mean_amp = zeros(nSubj, 3);
-
-for i = 1:nSubj
+    
+    % 打印结果
+    fprintf('\n====== N2 振幅和潜伏期 (电极: %s) ======\n', ch_name);
+    fprintf('条件\t\t平均振幅(uV)\t标准差\t\t平均潜伏期(ms)\t标准差\n');
     for c = 1:3
-        N2_mean_amp(i, c) = mean(squeeze(data(i, c, chan_idx, N2_start_idx:N2_end_idx)));
-        P3_mean_amp(i, c) = mean(squeeze(data(i, c, chan_idx, P3_start_idx:P3_end_idx)));
+        fprintf('%s\t%.2f\t\t%.2f\t\t%.1f\t\t%.1f\n', ...
+            Cond_names{c}, mean(N2_amp(:,c)), std(N2_amp(:,c)), ...
+            mean(N2_lat(:,c)), std(N2_lat(:,c)));
     end
+    
+    fprintf('\n====== P3 振幅和潜伏期 (电极: %s) ======\n', ch_name);
+    fprintf('条件\t\t平均振幅(uV)\t标准差\t\t平均潜伏期(ms)\t标准差\n');
+    for c = 1:3
+        fprintf('%s\t%.2f\t\t%.2f\t\t%.1f\t\t%.1f\n', ...
+            Cond_names{c}, mean(P3_amp(:,c)), std(P3_amp(:,c)), ...
+            mean(P3_lat(:,c)), std(P3_lat(:,c)));
+    end
+    
+    % 保存到总结构体中（用于后续导出）
+    all_N2_amp{ci} = N2_amp;
+    all_N2_lat{ci} = N2_lat;
+    all_P3_amp{ci} = P3_amp;
+    all_P3_lat{ci} = P3_lat;
 end
 
-%% ---- 4.3 柱状图 + 误差线（振幅对比）----
-figure('Name', 'N2 和 P3 振幅柱状图', 'NumberTitle', 'off');
+%% ---- 4.2 平均振幅测量（多电极，用于统计分析更稳健）----
+% 在成分峰值前后一个时间窗口内取平均振幅，比单点峰值更稳健
+for ci = 1:nChans
+    ch = chan_indices(ci);
+    N2_mean_amp_tmp = zeros(nSubj, 3);
+    P3_mean_amp_tmp = zeros(nSubj, 3);
+    for i = 1:nSubj
+        for c = 1:3
+            N2_mean_amp_tmp(i, c) = mean(squeeze(data(i, c, ch, N2_start_idx:N2_end_idx)));
+            P3_mean_amp_tmp(i, c) = mean(squeeze(data(i, c, ch, P3_start_idx:P3_end_idx)));
+        end
+    end
+    all_N2_mean_amp{ci} = N2_mean_amp_tmp;
+    all_P3_mean_amp{ci} = P3_mean_amp_tmp;
+end
 
-% N2 平均振幅柱状图
-subplot(121); hold on;
-means_N2 = mean(N2_mean_amp);
-se_N2 = std(N2_mean_amp) / sqrt(nSubj);
-bar_handle = bar(means_N2);
-bar_handle.FaceColor = 'flat';
-bar_handle.CData = [0 0 1; 0 0.6 0; 1 0 0];  % A=蓝, B=绿, C=红
-errorbar(1:3, means_N2, se_N2, 'k.', 'LineWidth', 1.5);
-set(gca, 'XTickLabel', {'A刺激', 'B刺激', 'C刺激'});
-ylabel('Amplitude (\muV)', 'fontsize', 12);
-title(sprintf('N2 Mean Amplitude (%d±%dms)', N2_peak_ms, N2_window_ms), 'fontsize', 13);
-box off;
+% 兼容旧变量（用第一个电极的数据）
+N2_amp = all_N2_amp{1}; N2_lat = all_N2_lat{1};
+P3_amp = all_P3_amp{1}; P3_lat = all_P3_lat{1};
+N2_mean_amp = all_N2_mean_amp{1}; P3_mean_amp = all_P3_mean_amp{1};
 
-% P3 平均振幅柱状图
-subplot(122); hold on;
-means_P3 = mean(P3_mean_amp);
-se_P3 = std(P3_mean_amp) / sqrt(nSubj);
-bar_handle = bar(means_P3);
-bar_handle.FaceColor = 'flat';
-bar_handle.CData = [0 0 1; 0 0.6 0; 1 0 0];
-errorbar(1:3, means_P3, se_P3, 'k.', 'LineWidth', 1.5);
-set(gca, 'XTickLabel', {'A刺激', 'B刺激', 'C刺激'});
-ylabel('Amplitude (\muV)', 'fontsize', 12);
-title(sprintf('P3 Mean Amplitude (%d±%dms)', P3_peak_ms, P3_window_ms), 'fontsize', 13);
-box off;
+%% ---- 4.3 多电极 N2/P3 平均振幅柱状图 ----
+figure('Name', '多电极 N2 平均振幅', 'NumberTitle', 'off', ...
+    'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
+for ci = 1:nChans
+    subplot(nRows, nCols, ci); hold on;
+    means_N2 = mean(all_N2_mean_amp{ci});
+    se_N2 = std(all_N2_mean_amp{ci}) / sqrt(nSubj);
+    bar_h = bar(means_N2);
+    bar_h.FaceColor = 'flat';
+    bar_h.CData = [0 0 1; 0 0.6 0; 1 0 0];
+    errorbar(1:3, means_N2, se_N2, 'k.', 'LineWidth', 1.5);
+    set(gca, 'XTickLabel', {'A', 'B', 'C'});
+    ylabel('\muV');
+    title(sprintf('%s N2 (%d±%dms)', chans_of_interest{ci}, N2_peak_ms, N2_window_ms), 'fontsize', 11);
+    box off;
+end
+sgtitle('N2 平均振幅 (各电极)', 'fontsize', 14, 'FontWeight', 'bold');
 
-%% ---- 4.4 潜伏期柱状图 ----
-figure('Name', 'N2 和 P3 潜伏期柱状图', 'NumberTitle', 'off');
-
-subplot(121); hold on;
-means_N2_lat = mean(N2_lat);
-se_N2_lat = std(N2_lat) / sqrt(nSubj);
-bar_handle = bar(means_N2_lat);
-bar_handle.FaceColor = 'flat';
-bar_handle.CData = [0 0 1; 0 0.6 0; 1 0 0];
-errorbar(1:3, means_N2_lat, se_N2_lat, 'k.', 'LineWidth', 1.5);
-set(gca, 'XTickLabel', {'A刺激', 'B刺激', 'C刺激'});
-ylabel('Latency (ms)', 'fontsize', 12);
-title('N2 Peak Latency', 'fontsize', 13);
-box off;
-
-subplot(122); hold on;
-means_P3_lat = mean(P3_lat);
-se_P3_lat = std(P3_lat) / sqrt(nSubj);
-bar_handle = bar(means_P3_lat);
-bar_handle.FaceColor = 'flat';
-bar_handle.CData = [0 0 1; 0 0.6 0; 1 0 0];
-errorbar(1:3, means_P3_lat, se_P3_lat, 'k.', 'LineWidth', 1.5);
-set(gca, 'XTickLabel', {'A刺激', 'B刺激', 'C刺激'});
-ylabel('Latency (ms)', 'fontsize', 12);
-title('P3 Peak Latency', 'fontsize', 13);
-box off;
+figure('Name', '多电极 P3 平均振幅', 'NumberTitle', 'off', ...
+    'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
+for ci = 1:nChans
+    subplot(nRows, nCols, ci); hold on;
+    means_P3 = mean(all_P3_mean_amp{ci});
+    se_P3 = std(all_P3_mean_amp{ci}) / sqrt(nSubj);
+    bar_h = bar(means_P3);
+    bar_h.FaceColor = 'flat';
+    bar_h.CData = [0 0 1; 0 0.6 0; 1 0 0];
+    errorbar(1:3, means_P3, se_P3, 'k.', 'LineWidth', 1.5);
+    set(gca, 'XTickLabel', {'A', 'B', 'C'});
+    ylabel('\muV');
+    title(sprintf('%s P3 (%d±%dms)', chans_of_interest{ci}, P3_peak_ms, P3_window_ms), 'fontsize', 11);
+    box off;
+end
+sgtitle('P3 平均振幅 (各电极)', 'fontsize', 14, 'FontWeight', 'bold');
 
 %% ========================================================================
 %% ============ Part 5: 单个被试波峰和潜伏期手动测量（交互式）==============
@@ -747,83 +772,78 @@ box off;
 %% ========================================================================
 % 注意：此部分需要 anova_rm 函数（来自 EEGLAB 插件或 File Exchange）
 
-fprintf('\n====== 正在进行逐时间点重复测量方差分析... ======\n');
+fprintf('\n====== 正在进行逐时间点重复测量方差分析（多电极）... ======\n');
 
-clear F_vals P_vals
 nTimepoints = size(data, 4);
 
-F_vals = zeros(1, nTimepoints);
-P_vals = ones(1, nTimepoints);  % 默认 p=1
-
-for t = 1:nTimepoints
-    % 提取所有被试三种正确条件在当前时间点的数据
-    % 维度: 被试 × 3条件
-    anova_data = squeeze(data(:, 1:3, chan_idx, t));
+% 对每个电极分别做 ANOVA
+for ci = 1:nChans
+    ch = chan_indices(ci);
+    ch_name = chans_of_interest{ci};
+    fprintf('  电极 %s...\n', ch_name);
     
-    try
-        [p, table] = anova_rm(anova_data, 'off');
-        P_vals(t) = p(1);
-        F_vals(t) = table{2, 5};
-    catch
-        P_vals(t) = 1;
-        F_vals(t) = 0;
+    F_vals = zeros(1, nTimepoints);
+    P_vals = ones(1, nTimepoints);
+    
+    for t = 1:nTimepoints
+        anova_data = squeeze(data(:, 1:3, ch, t));
+        try
+            [p, tbl] = anova_rm(anova_data, 'off');
+            P_vals(t) = p(1);
+            F_vals(t) = tbl{2, 5};
+        catch
+            P_vals(t) = 1;
+            F_vals(t) = 0;
+        end
     end
+    
+    % FDR 校正
+    try
+        [p_fdr, ~] = fdr(P_vals, 0.05);
+        fprintf('    %s FDR 校正阈值: p = %.6f\n', ch_name, p_fdr);
+    catch
+        p_fdr = 0.05;
+    end
+    
+    % 保存结果
+    all_F_vals{ci} = F_vals;
+    all_P_vals{ci} = P_vals;
+    all_p_fdr(ci) = p_fdr;
 end
 
-% FDR 校正
-try
-    [p_fdr, p_masked] = fdr(P_vals, 0.05);
-    fprintf('FDR 校正阈值: p = %.6f\n', p_fdr);
-catch
-    warning('fdr 函数不可用，跳过 FDR 校正');
-    p_fdr = 0.05;
-    p_masked = P_vals < 0.05;
+%% ---- 6.1 多电极 波形图 + p 值图 ----
+figure('Name', '多电极逐时间点ANOVA', 'NumberTitle', 'off', ...
+    'Position', [50 50 1200 350*ceil(nChans/3)*1.0]);
+
+for ci = 1:nChans
+    ch = chan_indices(ci);
+    ch_name = chans_of_interest{ci};
+    
+    % 上排：波形
+    subplot(2, nChans, ci); hold on;
+    set(gca, 'YDir', 'reverse');
+    plot(EEG.times, squeeze(mean(data(:,1,ch,:),1)), '-b', 'LineWidth', 1.2);
+    plot(EEG.times, squeeze(mean(data(:,2,ch,:),1)), 'Color', [0 0.6 0], 'LineWidth', 1.2);
+    plot(EEG.times, squeeze(mean(data(:,3,ch,:),1)), '-r', 'LineWidth', 1.2);
+    line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
+    title(ch_name, 'fontsize', 12, 'FontWeight', 'bold');
+    if ci == 1, ylabel('\muV'); end
+    xlabel('ms');
+    if ci == 1, legend('A','B','C', 'Location', 'best', 'FontSize', 7); end
+    box off;
+    
+    % 下排：p 值
+    subplot(2, nChans, nChans + ci); hold on;
+    plot(EEG.times, all_P_vals{ci}, 'b', 'LineWidth', 1);
+    line([EEG.times(1) EEG.times(end)], [0.05 0.05], 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
+    line([EEG.times(1) EEG.times(end)], [all_p_fdr(ci) all_p_fdr(ci)], 'Color', 'r', 'LineWidth', 1.5);
+    ylim([0 0.1]);
+    title(sprintf('p值 (FDR=%.4f)', all_p_fdr(ci)), 'fontsize', 10);
+    if ci == 1, ylabel('p value'); end
+    xlabel('ms');
+    box off;
 end
-
-%% ---- 6.1 波形图 + p 值图 ----
-figure('Name', '逐时间点方差分析结果', 'NumberTitle', 'off');
-
-% 上图：三种条件波形
-subplot(211); hold on;
-set(gca, 'YDir', 'reverse');
-plot(EEG.times, squeeze(mean(data(:, 1, chan_idx, :), 1)), '-b', 'LineWidth', 1.5);
-plot(EEG.times, squeeze(mean(data(:, 2, chan_idx, :), 1)), 'Color', [0 0.6 0], 'LineWidth', 1.5);
-plot(EEG.times, squeeze(mean(data(:, 3, chan_idx, :), 1)), '-r', 'LineWidth', 1.5);
-line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
-legend('A刺激-正确', 'B刺激-正确', 'C刺激-正确', 'Location', 'best');
-title(sprintf('三种刺激条件组平均波形 (%s)', chan_of_interest), 'fontsize', 14);
-xlabel('Latency (ms)', 'fontsize', 12);
-ylabel('Amplitude (\muV)', 'fontsize', 12);
-xlim([epoch_window(1)*1000 epoch_window(2)*1000]);
-box off;
-
-% 下图：p 值
-subplot(212); hold on;
-plot(EEG.times, P_vals, 'b', 'LineWidth', 1);
-line([EEG.times(1) EEG.times(end)], [0.05 0.05], 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
-line([EEG.times(1) EEG.times(end)], [p_fdr p_fdr], 'Color', [1 0 0], 'LineStyle', '-', 'LineWidth', 1.5);
-legend('p value', 'p=0.05', sprintf('FDR threshold (p=%.4f)', p_fdr), 'Location', 'best');
-title('逐时间点重复测量方差分析 p 值', 'fontsize', 14);
-xlabel('Latency (ms)', 'fontsize', 12);
-ylabel('p value', 'fontsize', 12);
-xlim([epoch_window(1)*1000 epoch_window(2)*1000]);
-ylim([0 0.1]);
-box off;
-
-%% ---- 6.2 F 值热图 ----
-figure('Name', 'F值热图', 'NumberTitle', 'off');
-hold on;
-imagesc(EEG.times, 1, F_vals);
-xlim([epoch_window(1)*1000 epoch_window(2)*1000]);
-colorbar;
-title('逐时间点重复测量方差分析 F 值', 'fontsize', 14);
-xlabel('Latency (ms)', 'fontsize', 12);
-
-% 在显著时间点上方添加标记
-sig_times = EEG.times(P_vals < p_fdr);
-if ~isempty(sig_times)
-    plot(sig_times, ones(size(sig_times)) * 1.3, 'r*', 'MarkerSize', 3);
-end
+sgtitle('逐时间点重复测量方差分析 (各电极)', 'fontsize', 14, 'FontWeight', 'bold');
 
 %% ========================================================================
 %% ============ Part 7: 导出数据（方便后续统计软件分析）====================
@@ -838,43 +858,53 @@ for si = 1:nSubj
     [~, SubjNames{si}, ~] = fileparts(SubjFiles{si});
 end
 
-% 使用 fprintf 直接写 CSV（避免 EEGLAB 插件覆盖 MATLAB 的 table 函数）
+% 为每个电极分别导出 CSV
 csv_header = 'Subject,A_correct,B_correct,C_correct\n';
 
-% N2 平均振幅
-fid = fopen(fullfile(file_path, 'N2_mean_amplitude.csv'), 'w');
-fprintf(fid, csv_header);
-for si = 1:nSubj
-    fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, N2_mean_amp(si,1), N2_mean_amp(si,2), N2_mean_amp(si,3));
+for ci = 1:nChans
+    ch_name = chans_of_interest{ci};
+    
+    % N2 平均振幅
+    fname = fullfile(file_path, sprintf('N2_mean_amplitude_%s.csv', ch_name));
+    fid = fopen(fname, 'w');
+    fprintf(fid, csv_header);
+    for si = 1:nSubj
+        fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, ...
+            all_N2_mean_amp{ci}(si,1), all_N2_mean_amp{ci}(si,2), all_N2_mean_amp{ci}(si,3));
+    end
+    fclose(fid);
+    
+    % P3 平均振幅
+    fname = fullfile(file_path, sprintf('P3_mean_amplitude_%s.csv', ch_name));
+    fid = fopen(fname, 'w');
+    fprintf(fid, csv_header);
+    for si = 1:nSubj
+        fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, ...
+            all_P3_mean_amp{ci}(si,1), all_P3_mean_amp{ci}(si,2), all_P3_mean_amp{ci}(si,3));
+    end
+    fclose(fid);
+    
+    % N2 峰值潜伏期
+    fname = fullfile(file_path, sprintf('N2_peak_latency_%s.csv', ch_name));
+    fid = fopen(fname, 'w');
+    fprintf(fid, csv_header);
+    for si = 1:nSubj
+        fprintf(fid, '%s,%.1f,%.1f,%.1f\n', SubjNames{si}, ...
+            all_N2_lat{ci}(si,1), all_N2_lat{ci}(si,2), all_N2_lat{ci}(si,3));
+    end
+    fclose(fid);
+    
+    % P3 峰值潜伏期
+    fname = fullfile(file_path, sprintf('P3_peak_latency_%s.csv', ch_name));
+    fid = fopen(fname, 'w');
+    fprintf(fid, csv_header);
+    for si = 1:nSubj
+        fprintf(fid, '%s,%.1f,%.1f,%.1f\n', SubjNames{si}, ...
+            all_P3_lat{ci}(si,1), all_P3_lat{ci}(si,2), all_P3_lat{ci}(si,3));
+    end
+    fclose(fid);
+    
+    fprintf('电极 %s 的数据已导出 (N2振幅/潜伏期, P3振幅/潜伏期)\n', ch_name);
 end
-fclose(fid);
-fprintf('N2 平均振幅已导出至: %s\n', fullfile(file_path, 'N2_mean_amplitude.csv'));
-
-% P3 平均振幅
-fid = fopen(fullfile(file_path, 'P3_mean_amplitude.csv'), 'w');
-fprintf(fid, csv_header);
-for si = 1:nSubj
-    fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, P3_mean_amp(si,1), P3_mean_amp(si,2), P3_mean_amp(si,3));
-end
-fclose(fid);
-fprintf('P3 平均振幅已导出至: %s\n', fullfile(file_path, 'P3_mean_amplitude.csv'));
-
-% N2 峰值潜伏期
-fid = fopen(fullfile(file_path, 'N2_peak_latency.csv'), 'w');
-fprintf(fid, csv_header);
-for si = 1:nSubj
-    fprintf(fid, '%s,%.1f,%.1f,%.1f\n', SubjNames{si}, N2_lat(si,1), N2_lat(si,2), N2_lat(si,3));
-end
-fclose(fid);
-fprintf('N2 峰值潜伏期已导出至: %s\n', fullfile(file_path, 'N2_peak_latency.csv'));
-
-% P3 峰值潜伏期
-fid = fopen(fullfile(file_path, 'P3_peak_latency.csv'), 'w');
-fprintf(fid, csv_header);
-for si = 1:nSubj
-    fprintf(fid, '%s,%.1f,%.1f,%.1f\n', SubjNames{si}, P3_lat(si,1), P3_lat(si,2), P3_lat(si,3));
-end
-fclose(fid);
-fprintf('P3 峰值潜伏期已导出至: %s\n', fullfile(file_path, 'P3_peak_latency.csv'));
 
 fprintf('\n====== 所有分析完成！ ======\n');
