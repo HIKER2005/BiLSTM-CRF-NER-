@@ -8,8 +8,13 @@
   Figure 2 — Bland-Altman 一致性分析图
   Figure 3 — 被试配对折线图 + 差值分布直方图
   Figure 4 — 小提琴图 + 配对 t 检验
+
+使用方法：
+  修改下面的 SCHEME 变量选择配色（1-6），运行 python plot_iaf_comparison.py
+  运行 python plot_iaf_comparison.py --preview 可预览所有配色方案
 """
 
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -69,6 +74,163 @@ gs_iaf = np.array([
 N = len(subjects)
 
 # =====================================================================
+# ★★★ 配色方案选择 ★★★  修改这里切换配色（1-6）
+# =====================================================================
+SCHEME = 1
+
+COLOR_SCHEMES = {
+    # ------------------------------------------------------------------
+    # 方案 1: 经典三色 (Classic)
+    #   蓝/橙红/绿 — 高对比度，辨识度最高
+    #   适合: 大多数期刊、屏幕演示、PPT
+    # ------------------------------------------------------------------
+    1: {
+        "name":    "Classic",
+        "FOOOF":   "#2171B5",   # 钴蓝
+        "SG":      "#E6550D",   # 橙红
+        "GS":      "#31A354",   # 森林绿
+        "GRAY":    "#969696",
+    },
+    # ------------------------------------------------------------------
+    # 方案 2: Nature 风格 (Nature)
+    #   深青/砖红/青绿 — 低饱和度，沉稳大气
+    #   适合: Nature / Science / Cell 系列高端期刊
+    # ------------------------------------------------------------------
+    2: {
+        "name":    "Nature",
+        "FOOOF":   "#4E79A7",   # 钢青蓝
+        "SG":      "#C1553D",   # 砖红
+        "GS":      "#59A14F",   # 苔藓绿
+        "GRAY":    "#AAAAAA",
+    },
+    # ------------------------------------------------------------------
+    # 方案 3: 色盲友好 (Okabe-Ito)
+    #   来自 Okabe & Ito (2008) 无障碍配色
+    #   适合: 所有期刊（审稿人可能色盲），强烈推荐
+    # ------------------------------------------------------------------
+    3: {
+        "name":    "Colorblind-safe (Okabe-Ito)",
+        "FOOOF":   "#0072B2",   # 蓝
+        "SG":      "#D55E00",   # 朱红
+        "GS":      "#009E73",   # 蓝绿
+        "GRAY":    "#999999",
+    },
+    # ------------------------------------------------------------------
+    # 方案 4: 冷色学术 (Cool Academic)
+    #   藏青/钢蓝/石板灰 — 同色系渐变，极简高级
+    #   适合: 工科/信号处理类论文、偏好简约的审稿人
+    # ------------------------------------------------------------------
+    4: {
+        "name":    "Cool Academic",
+        "FOOOF":   "#1B3A5C",   # 藏青
+        "SG":      "#4A90D9",   # 钢蓝
+        "GS":      "#7FCDBB",   # 薄荷绿
+        "GRAY":    "#B0B0B0",
+    },
+    # ------------------------------------------------------------------
+    # 方案 5: 暖色系 (Warm Earth)
+    #   靛蓝/赤陶/橄榄 — 温暖厚重感
+    #   适合: 医学/心理学/认知神经科学类期刊
+    # ------------------------------------------------------------------
+    5: {
+        "name":    "Warm Earth",
+        "FOOOF":   "#3C4F76",   # 靛蓝
+        "SG":      "#C4622D",   # 赤陶橘
+        "GS":      "#8B9E3A",   # 橄榄绿
+        "GRAY":    "#A0A0A0",
+    },
+    # ------------------------------------------------------------------
+    # 方案 6: 灰度 (Grayscale)
+    #   纯灰阶 — 黑白打印完美兼容
+    #   适合: 要求黑白印刷的期刊、学位论文
+    #   注意: 此方案依赖标记形状区分数据系列
+    # ------------------------------------------------------------------
+    6: {
+        "name":    "Grayscale",
+        "FOOOF":   "#2A2A2A",   # 深灰（近黑）
+        "SG":      "#787878",   # 中灰
+        "GS":      "#B8B8B8",   # 浅灰
+        "GRAY":    "#C8C8C8",
+    },
+}
+
+# =====================================================================
+# 配色预览模式：python plot_iaf_comparison.py --preview
+# =====================================================================
+def show_preview():
+    """生成所有配色方案的预览对比图"""
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+    axes = axes.flatten()
+
+    dummy_x = np.linspace(8, 13, 50)
+    np.random.seed(42)
+
+    for idx, (scheme_id, scheme) in enumerate(COLOR_SCHEMES.items()):
+        ax = axes[idx]
+        c_f, c_s, c_g, c_gr = scheme["FOOOF"], scheme["SG"], scheme["GS"], scheme["GRAY"]
+
+        # 模拟散点
+        ax.scatter(fooof_iaf[:20], sg_iaf[:20], s=40, c=c_s, alpha=0.8,
+                   edgecolors="white", linewidths=0.5, label="SG", zorder=3)
+        ax.scatter(fooof_iaf[:20], gs_iaf[:20], s=40, c=c_g, alpha=0.8,
+                   edgecolors="white", linewidths=0.5, marker="^", label="Gaussian", zorder=3)
+        # 回归线
+        ax.plot(dummy_x, dummy_x * 0.98 + 0.15, color=c_s, lw=2)
+        ax.plot(dummy_x, dummy_x * 1.01 - 0.1, color=c_g, lw=2)
+        # y=x
+        ax.plot(dummy_x, dummy_x, ls="--", color=c_gr, lw=1)
+        # 填充示例
+        ax.fill_between(dummy_x, dummy_x - 0.3, dummy_x + 0.3,
+                         color=c_f, alpha=0.12)
+        # 垂直线
+        ax.axvline(x=10.0, color=c_f, ls="-", lw=2, alpha=0.8, label="FOOOF")
+
+        ax.set_xlim(8, 13)
+        ax.set_ylim(8, 13)
+        ax.set_title(f"方案 {scheme_id}: {scheme['name']}", fontsize=12, fontweight="bold")
+        ax.set_xlabel("FOOOF IAF (Hz)")
+        ax.set_ylabel("Smoothing IAF (Hz)")
+        ax.legend(fontsize=8, loc="lower right")
+        ax.grid(ls="--", alpha=0.3)
+        ax.set_aspect("equal")
+
+    fig.suptitle("配色方案预览  —  修改脚本顶部的 SCHEME 变量 (1-6) 选择配色",
+                 fontsize=14, fontweight="bold", y=1.01)
+    fig.tight_layout()
+    fig.savefig("fig0_color_preview.png")
+    fig.savefig("fig0_color_preview.svg")
+    print("[OK] fig0_color_preview saved (PNG + SVG).")
+    print("\n推荐：")
+    print("  方案 1 (Classic)       — 通用首选，辨识度最高")
+    print("  方案 2 (Nature)        — 投 Nature/Science/Cell 系列推荐")
+    print("  方案 3 (Okabe-Ito)     — 色盲友好，最具包容性")
+    print("  方案 4 (Cool Academic) — 工科/信号处理，简约高级")
+    print("  方案 5 (Warm Earth)    — 医学/心理学/认知神经，温暖沉稳")
+    print("  方案 6 (Grayscale)     — 黑白印刷，学位论文")
+    plt.show()
+
+if "--preview" in sys.argv:
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif":  ["Times New Roman", "SimSun", "DejaVu Serif"],
+        "font.sans-serif": ["SimHei", "Microsoft YaHei", "DejaVu Sans"],
+        "axes.unicode_minus": False,
+        "figure.dpi": 150, "savefig.dpi": 300, "savefig.bbox": "tight",
+    })
+    show_preview()
+    sys.exit(0)
+
+# =====================================================================
+# 应用选定的配色方案
+# =====================================================================
+_scheme = COLOR_SCHEMES[SCHEME]
+C_FOOOF = _scheme["FOOOF"]
+C_SG    = _scheme["SG"]
+C_GS    = _scheme["GS"]
+C_GRAY  = _scheme["GRAY"]
+print(f"[配色] 使用方案 {SCHEME}: {_scheme['name']}")
+
+# =====================================================================
 # 全局绘图样式
 # =====================================================================
 plt.rcParams.update({
@@ -86,12 +248,6 @@ plt.rcParams.update({
     "savefig.dpi":       300,
     "savefig.bbox":      "tight",
 })
-
-# 配色
-C_FOOOF = "#2171B5"   # 蓝色 — FOOOF
-C_SG    = "#E6550D"   # 橙红 — SG
-C_GS    = "#31A354"   # 绿色 — Gaussian
-C_GRAY  = "#969696"
 
 # =====================================================================
 # 辅助函数
