@@ -226,11 +226,11 @@ if "--preview" in sys.argv:
 # 应用选定的配色方案
 # =====================================================================
 _scheme = COLOR_SCHEMES[SCHEME]
-C_FOOOF = _scheme["FOOOF"]
+C_FOOOF = "#1F77B4"   # 蓝色 — FOOOF（验证方法）
+C_GS    = "#FF7F0E"   # 橙色 — 高斯平滑（原始方法）
 C_SG    = _scheme["SG"]
-C_GS    = _scheme["GS"]
-C_GRAY  = _scheme["GRAY"]
-print(f"[配色] 使用方案 {SCHEME}: {_scheme['name']}")
+C_GRAY  = "#999999"
+print(f"[配色] 蓝色(FOOOF) + 橙色(高斯平滑)")
 
 # =====================================================================
 # 全局绘图样式
