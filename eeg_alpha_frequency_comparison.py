@@ -19,10 +19,9 @@ base_path = r'C:\Users\lee23\Desktop\小论文返修\静息脑电'
 
 # 创建空列表来存储数据路径
 data_paths = []
-# 方法一：FOOOF去除非周期成分 + 平滑 得出的IAF
-method1_iaf_sg_data = []   # SG平滑
-method1_iaf_gs_data = []   # 高斯平滑
-# 方法二：直接对原始功率谱平滑 得出的IAF
+# 方法一：FOOOF参数化频谱分解，从拟合的高斯峰中提取Alpha峰中心频率作为IAF
+fooof_iaf_data = []
+# 方法二：直接对原始功率谱平滑后在Alpha频段找峰值作为IAF
 method2_iaf_sg_data = []   # SG平滑
 method2_iaf_gs_data = []   # 高斯平滑
 
@@ -173,8 +172,14 @@ for i, path in enumerate(data_paths, 1):
     # 功率谱计算：|FFT|² / (采样率 × 窗函数能量)
     power_spectrum = (np.abs(fft_result) ** 2) / (downSampleRate * (window ** 2).sum())
 
-    # ===================== FOOOF分析 + 提取周期成分 =====================
-    print("\n进行FOOOF分析...")
+    # ===================== 方法一：FOOOF参数化频谱分析 =====================
+    # FOOOF (fitting oscillations & one over f) 的核心原理：
+    #   1. 将功率谱建模为：Power(f) = Aperiodic(f) + Σ Gaussian_peaks(f)
+    #   2. Aperiodic(f) = b + log10(f^(-χ)) 是1/f非周期背景
+    #   3. 每个振荡峰用高斯函数拟合：G(f) = a * exp(-(f-μ)²/(2σ²))
+    #   4. peak_params_ 输出每个峰的 [μ(中心频率), a(功率), σ(带宽)]
+    # 所以FOOOF提取IAF的正确方式是：从peak_params_中找Alpha频段内功率最大的峰的中心频率
+    print("\n进行FOOOF参数化频谱分析...")
 
     # 创建FOOOF对象
     fm = FOOOF(peak_width_limits=(1, 8), max_n_peaks=6, min_peak_height=0.1)
@@ -182,50 +187,65 @@ for i, path in enumerate(data_paths, 1):
     # 定义感兴趣的频率范围（Alpha波段及其周边）
     freq_range = [3, 30]
 
-    # 初始化周期成分功率谱（去除非周期1/f背景后的功率）
+    # 存储当前被试的FOOOF IAF（6个通道）
+    current_fooof_iaf = []
+    # 初始化周期成分功率谱（用于可视化）
     periodic_spectrum = np.zeros_like(power_spectrum)
 
-    # 对每个通道进行FOOOF拟合，提取周期成分
+    # 对每个通道进行FOOOF拟合
     for ch in range(num_channels):
         try:
             # 拟合FOOOF模型到原始功率谱
             fm.fit(freqs, power_spectrum[ch], freq_range)
 
-            # 提取周期成分（去除非周期/1f背景）
-            # fm._ap_fit 是非周期成分在对数空间的拟合
-            # 周期成分 = 原始功率 - 非周期功率（线性空间减法）
+            # 提取周期成分功率谱（用于可视化）
             freq_mask = (freqs >= freq_range[0]) & (freqs <= freq_range[1])
             ap_linear = 10 ** fm._ap_fit  # 非周期成分转回线性空间
             periodic_spectrum[ch, freq_mask] = power_spectrum[ch, freq_mask] - ap_linear
             periodic_spectrum[ch, freq_mask] = np.maximum(periodic_spectrum[ch, freq_mask], 0)
 
-            print(f"  通道 {dataname[ch]}: FOOOF拟合成功，已提取周期成分")
+            # ★ FOOOF的核心价值：参数化高斯峰拟合 ★
+            # peak_params_ = [[中心频率, 功率, 带宽], ...] 每行一个峰
+            peak_params = fm.peak_params_
+
+            # 在Alpha频段(8-13Hz)内寻找功率最大的高斯峰
+            iaf = None
+            if len(peak_params) > 0:
+                alpha_peaks = peak_params[(peak_params[:, 0] >= 8) & (peak_params[:, 0] <= 13)]
+                if len(alpha_peaks) > 0:
+                    # 选择功率最大的峰，其中心频率即为IAF
+                    iaf = alpha_peaks[np.argmax(alpha_peaks[:, 1]), 0]
+
+            current_fooof_iaf.append(iaf if iaf is not None else np.nan)
+
+            if iaf is not None:
+                print(f"  通道 {dataname[ch]}: FOOOF IAF = {iaf:.2f} Hz "
+                      f"(拟合R²={fm.r_squared_:.3f}, 检测到{len(peak_params)}个峰)")
+            else:
+                print(f"  通道 {dataname[ch]}: 未检测到Alpha峰 "
+                      f"(拟合R²={fm.r_squared_:.3f}, 检测到{len(peak_params)}个峰)")
 
         except Exception as e:
-            print(f"  通道 {dataname[ch]}: FOOOF拟合失败 - {e}，使用原始功率谱")
-            periodic_spectrum[ch] = power_spectrum[ch]  # 拟合失败时退回原始功率谱
+            print(f"  通道 {dataname[ch]}: FOOOF拟合失败 - {e}")
+            current_fooof_iaf.append(np.nan)
+            periodic_spectrum[ch] = power_spectrum[ch]
 
-    # ===================== 平滑处理 =====================
+    fooof_iaf_data.append(current_fooof_iaf)
 
-    # --- 方法二：直接对原始功率谱做平滑 ---
+    # ===================== 方法二：原始功率谱 + 平滑峰值检测 =====================
+
     # Savitzky-Golay滤波器：251点的窗口，2阶多项式
     power_spectrum_smooth_sg = savgol_filter(power_spectrum, 251, 2)
     # 高斯滤波：标准差为10的高斯核
     power_spectrum_smooth_gs = gaussian_filter1d(power_spectrum, 10)
 
-    # --- 方法一：对FOOOF周期成分（去除非周期背景后）做平滑 ---
-    periodic_smooth_sg = savgol_filter(periodic_spectrum, 251, 2)
-    periodic_smooth_gs = gaussian_filter1d(periodic_spectrum, 10)
-
-    # 存储当前数据路径各方法的IAF
-    current_method1_iaf_sg = []  # 方法一 SG平滑
-    current_method1_iaf_gs = []  # 方法一 高斯平滑
+    # 存储当前数据路径方法二的IAF
     current_method2_iaf_sg = []  # 方法二 SG平滑
     current_method2_iaf_gs = []  # 方法二 高斯平滑
 
     # 创建图形窗口，双列布局：左列方法二，右列方法一
     plt.figure(figsize=(16, 12))
-    plt.suptitle("IAF对比: 方法二(原始功率谱+平滑) vs 方法一(FOOOF去非周期+平滑)", y=1.02)
+    plt.suptitle("IAF对比: 方法一(FOOOF参数化拟合) vs 方法二(功率谱平滑+峰值检测)", y=1.02)
 
     # Alpha频段索引范围
     alpha_start_idx = 8 * num_samples // downSampleRate
@@ -234,6 +254,13 @@ for i, path in enumerate(data_paths, 1):
     # 为每个通道创建子图进行可视化
     for ch in range(num_channels):
         print(f"\n-----------------IAF对比({dataname[ch]}通道)-----------------")
+
+        # ===== 方法一：FOOOF参数化IAF（已在上面的循环中计算） =====
+        fooof_iaf = current_fooof_iaf[ch]
+        if not np.isnan(fooof_iaf):
+            print(f"  方法一 FOOOF参数化 IAF: {fooof_iaf:.2f} Hz")
+        else:
+            print(f"  方法一 FOOOF参数化 IAF: 未检测到Alpha峰")
 
         # ===== 方法二：直接对原始功率谱平滑 =====
         # SG平滑 IAF
@@ -254,29 +281,11 @@ for i, path in enumerate(data_paths, 1):
         current_method2_iaf_gs.append(method2_gs_freq)
         print(f"  方法二 高斯平滑 IAF: {method2_gs_freq:.2f} Hz")
 
-        # ===== 方法一：FOOOF去除非周期成分后平滑 =====
-        # SG平滑 IAF
-        max_power_idx = (
-                np.argmax(periodic_smooth_sg[ch, alpha_start_idx:alpha_end_idx])
-                + alpha_start_idx
-        )
-        method1_sg_freq = freqs[max_power_idx]
-        current_method1_iaf_sg.append(method1_sg_freq)
-        print(f"  方法一 FOOOF+SG平滑 IAF: {method1_sg_freq:.2f} Hz")
-
-        # 高斯平滑 IAF
-        max_power_idx = (
-                np.argmax(periodic_smooth_gs[ch, alpha_start_idx:alpha_end_idx])
-                + alpha_start_idx
-        )
-        method1_gs_freq = freqs[max_power_idx]
-        current_method1_iaf_gs.append(method1_gs_freq)
-        print(f"  方法一 FOOOF+高斯平滑 IAF: {method1_gs_freq:.2f} Hz")
-
         # 差值
-        diff_sg = abs(method1_sg_freq - method2_sg_freq)
-        diff_gs = abs(method1_gs_freq - method2_gs_freq)
-        print(f"  SG平滑差值: {diff_sg:.2f} Hz | 高斯平滑差值: {diff_gs:.2f} Hz")
+        if not np.isnan(fooof_iaf):
+            diff_sg = abs(fooof_iaf - method2_sg_freq)
+            diff_gs = abs(fooof_iaf - method2_gs_freq)
+            print(f"  差值: FOOOF vs SG = {diff_sg:.2f} Hz | FOOOF vs 高斯 = {diff_gs:.2f} Hz")
         print(f"-----------------------结束-----------------------")
 
         # ===== 可视化 =====
@@ -285,13 +294,16 @@ for i, path in enumerate(data_paths, 1):
         plt.semilogy(freqs, power_spectrum[ch], color="blue", linewidth=1, label="原始")
         plt.semilogy(freqs, power_spectrum_smooth_sg[ch], color="red", linewidth=2, label="SG平滑")
         plt.semilogy(freqs, power_spectrum_smooth_gs[ch], color="orange", linewidth=2, label="高斯平滑")
-        plt.axvline(x=method2_gs_freq, color="green", linestyle="--", alpha=0.7, label=f"IAF={method2_gs_freq:.1f}Hz")
+        plt.axvline(x=method2_gs_freq, color="green", linestyle="--", alpha=0.7,
+                    label=f"GS IAF={method2_gs_freq:.1f}Hz")
+        plt.axvline(x=method2_sg_freq, color="red", linestyle=":", alpha=0.7,
+                    label=f"SG IAF={method2_sg_freq:.1f}Hz")
         plt.xlim(5, 15)
         plt.ylim(1e-16, 1e-10)
         plt.grid(True, which="both", linestyle="--", alpha=0.6)
         plt.ylabel(f"{dataname[ch]}\nPower (V²/Hz)")
         if ch == 0:
-            plt.title("方法二: 原始功率谱 + 平滑")
+            plt.title("方法二: 功率谱平滑 + 峰值检测")
         if ch == num_channels - 1:
             plt.xlabel("Frequency (Hz)")
         else:
@@ -299,17 +311,19 @@ for i, path in enumerate(data_paths, 1):
         if ch == 0:
             plt.legend(fontsize=7, loc="upper right")
 
-        # 右列：方法一 - FOOOF周期成分 + 平滑
+        # 右列：方法一 - FOOOF参数化分解
         ax2 = plt.subplot(num_channels, 2, ch * 2 + 2)
-        plt.plot(freqs, periodic_spectrum[ch], color="blue", linewidth=1, label="周期成分")
-        plt.plot(freqs, periodic_smooth_sg[ch], color="red", linewidth=2, label="SG平滑")
-        plt.plot(freqs, periodic_smooth_gs[ch], color="orange", linewidth=2, label="高斯平滑")
-        plt.axvline(x=method1_gs_freq, color="green", linestyle="--", alpha=0.7, label=f"IAF={method1_gs_freq:.1f}Hz")
+        # 绘制去除非周期成分后的周期成分功率谱
+        plt.plot(freqs, periodic_spectrum[ch], color="blue", linewidth=1, label="周期成分(去1/f)")
+        # 标注FOOOF检测到的IAF位置
+        if not np.isnan(fooof_iaf):
+            plt.axvline(x=fooof_iaf, color="green", linestyle="--", linewidth=2, alpha=0.8,
+                        label=f"FOOOF IAF={fooof_iaf:.2f}Hz")
         plt.xlim(5, 15)
         plt.grid(True, which="both", linestyle="--", alpha=0.6)
         plt.ylabel(f"{dataname[ch]}\nPeriodic Power")
         if ch == 0:
-            plt.title("方法一: FOOOF周期成分 + 平滑")
+            plt.title("方法一: FOOOF参数化分解")
         if ch == num_channels - 1:
             plt.xlabel("Frequency (Hz)")
         else:
@@ -323,35 +337,35 @@ for i, path in enumerate(data_paths, 1):
     plt.show()
 
     # 存储当前被试的IAF结果
-    method1_iaf_sg_data.append(current_method1_iaf_sg)
-    method1_iaf_gs_data.append(current_method1_iaf_gs)
     method2_iaf_sg_data.append(current_method2_iaf_sg)
     method2_iaf_gs_data.append(current_method2_iaf_gs)
 
 # ===================== 汇总输出：两种方法IAF对比 =====================
 print("\n" + "="*120)
 print("AVG通道 IAF 汇总对比")
-print("方法一: FOOOF去除非周期成分 + 平滑    方法二: 直接原始功率谱 + 平滑")
+print("方法一: FOOOF参数化频谱分解（高斯峰拟合）    方法二: 原始功率谱 + 平滑峰值检测")
 print("="*120)
-print(f"{'序号':<6}{'被试':<30}{'方法一SG':<12}{'方法一GS':<12}{'方法二SG':<12}{'方法二GS':<12}{'差值SG':<10}{'差值GS':<10}")
+print(f"{'序号':<6}{'被试':<30}{'FOOOF IAF':<14}{'SG平滑IAF':<14}{'高斯平滑IAF':<14}{'差值vs SG':<12}{'差值vs GS':<12}")
 print("-"*120)
 
 all_diff_sg = []
 all_diff_gs = []
 for i, path in enumerate(data_paths, 1):
-    m1_sg = method1_iaf_sg_data[i-1][5]  # avg通道索引为5
-    m1_gs = method1_iaf_gs_data[i-1][5]
-    m2_sg = method2_iaf_sg_data[i-1][5]
-    m2_gs = method2_iaf_gs_data[i-1][5]
-    diff_sg = abs(m1_sg - m2_sg)
-    diff_gs = abs(m1_gs - m2_gs)
+    f_iaf = fooof_iaf_data[i-1][5]  # avg通道索引为5
+    sg_iaf = method2_iaf_sg_data[i-1][5]
+    gs_iaf = method2_iaf_gs_data[i-1][5]
+    diff_sg = abs(f_iaf - sg_iaf) if not np.isnan(f_iaf) else np.nan
+    diff_gs = abs(f_iaf - gs_iaf) if not np.isnan(f_iaf) else np.nan
     all_diff_sg.append(diff_sg)
     all_diff_gs.append(diff_gs)
-    print(f"{i:<6}{os.path.basename(path):<30}{m1_sg:<12.2f}{m1_gs:<12.2f}{m2_sg:<12.2f}{m2_gs:<12.2f}{diff_sg:<10.2f}{diff_gs:<10.2f}")
+    f_str = f"{f_iaf:.2f}" if not np.isnan(f_iaf) else "N/A"
+    d_sg_str = f"{diff_sg:.2f}" if not np.isnan(diff_sg) else "N/A"
+    d_gs_str = f"{diff_gs:.2f}" if not np.isnan(diff_gs) else "N/A"
+    print(f"{i:<6}{os.path.basename(path):<30}{f_str:<14}{sg_iaf:<14.2f}{gs_iaf:<14.2f}{d_sg_str:<12}{d_gs_str:<12}")
 
 print("-"*120)
-print(f"{'平均差值':<72}{np.nanmean(all_diff_sg):<10.2f}{np.nanmean(all_diff_gs):<10.2f}")
-print(f"{'最大差值':<72}{np.nanmax(all_diff_sg):<10.2f}{np.nanmax(all_diff_gs):<10.2f}")
-print(f"{'最小差值':<72}{np.nanmin(all_diff_sg):<10.2f}{np.nanmin(all_diff_gs):<10.2f}")
-print(f"{'标准差':<72}{np.nanstd(all_diff_sg):<10.2f}{np.nanstd(all_diff_gs):<10.2f}")
+print(f"{'平均差值':<72}{np.nanmean(all_diff_sg):<12.2f}{np.nanmean(all_diff_gs):<12.2f}")
+print(f"{'最大差值':<72}{np.nanmax(all_diff_sg):<12.2f}{np.nanmax(all_diff_gs):<12.2f}")
+print(f"{'最小差值':<72}{np.nanmin(all_diff_sg):<12.2f}{np.nanmin(all_diff_gs):<12.2f}")
+print(f"{'标准差':<72}{np.nanstd(all_diff_sg):<12.2f}{np.nanstd(all_diff_gs):<12.2f}")
 print("="*120)
