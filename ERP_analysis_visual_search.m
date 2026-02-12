@@ -85,6 +85,15 @@ Subj = 1:nSubj;
 epoch_window = [-0.1 0.8];             % 分段时间窗，单位：秒（-100ms 到 800ms）
 baseline_window = [-100 0];             % 基线校正窗口，单位：毫秒
 
+% ====== ERP 波形平滑参数 ======
+% 对平均后的 ERP 波形做低通滤波，去除高频毛刺，使 ERP 成分更清晰
+% 这是 ERP 研究中的标准做法，不影响原始数据，仅用于分析和可视化
+apply_lowpass = true;                   %%% 是否对平均后的波形做低通滤波
+lowpass_cutoff = 30;                    %%% 低通滤波截止频率(Hz)，推荐 20~30Hz
+                                        %%% 20Hz: 更平滑，适合重点看 P3 等慢成分
+                                        %%% 30Hz: 保留更多细节，适合看 N1/P1 等快成分
+lowpass_order = 4;                      %%% Butterworth 滤波器阶数（通常 2~6）
+
 % 原始事件标记
 stim_markers = [11, 21, 31];            % A/B/C 三种刺激类型标记
 target_marker = 41;                     % 有目标视觉搜索标记
@@ -459,18 +468,55 @@ for i = 1:nSubj
 end
 
 %% ========================= 保存时间和电极信息 =========================
+srate = EEG.srate;   % 保存采样率（滤波需要）
 tepoch = EEG.times;
 chanloc = EEG.chanlocs;
 EEG = [];
 EEG.times = tepoch;
 EEG.chanlocs = chanloc;
+EEG.srate = srate;
 
-% 保存数据
+% 保存数据（未滤波的原始平均）
 save_path = fullfile(file_path, 'all_data.mat');
 save(save_path, 'data', 'data_nt', 'EEG', 'Subj', 'SubjFiles', 'Cond_names', 'Cond_markers', ...
-    'chan_idx', 'chan_of_interest', 'chan_indices', 'chans_of_interest');
+    'chan_idx', 'chan_of_interest', 'chan_indices', 'chans_of_interest', 'srate');
 fprintf('\n数据已保存至: %s\n', save_path);
 fprintf('data 维度: %s (被试 × 条件 × 电极 × 时间点)\n', mat2str(size(data)));
+
+%% ========================= ERP 波形低通滤波（去除高频毛刺）=========================
+if apply_lowpass
+    fprintf('\n====== 对平均后的ERP波形进行低通滤波 ======\n');
+    fprintf('截止频率: %d Hz, 滤波器阶数: %d, 采样率: %d Hz\n', lowpass_cutoff, lowpass_order, srate);
+    
+    % 设计 Butterworth 低通滤波器
+    Wn = lowpass_cutoff / (srate / 2);  % 归一化截止频率
+    if Wn >= 1
+        warning('截止频率 %d Hz 超过奈奎斯特频率 %d Hz，跳过滤波！', lowpass_cutoff, srate/2);
+    else
+        [filt_b, filt_a] = butter(lowpass_order, Wn, 'low');
+        
+        % 对 data (被试×条件×电极×时间) 的每条波形做零相位滤波
+        fprintf('正在滤波 data (有目标)...\n');
+        for si = 1:size(data, 1)
+            for ci = 1:size(data, 2)
+                for ch = 1:size(data, 3)
+                    data(si, ci, ch, :) = filtfilt(filt_b, filt_a, squeeze(data(si, ci, ch, :)));
+                end
+            end
+        end
+        
+        fprintf('正在滤波 data_nt (无目标)...\n');
+        for si = 1:size(data_nt, 1)
+            for ci = 1:size(data_nt, 2)
+                for ch = 1:size(data_nt, 3)
+                    data_nt(si, ci, ch, :) = filtfilt(filt_b, filt_a, squeeze(data_nt(si, ci, ch, :)));
+                end
+            end
+        end
+        
+        fprintf('低通滤波完成！波形已平滑。\n');
+    end
+end
 
 %% ========================================================================
 %% ========================= Part 2: 画波形图（多电极）====================
