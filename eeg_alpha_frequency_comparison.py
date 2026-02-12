@@ -19,9 +19,12 @@ base_path = r'C:\Users\lee23\Desktop\小论文返修\静息脑电'
 
 # 创建空列表来存储数据路径
 data_paths = []
-FOOOF_iaf_gs_data = []
-FOOOF_iaf_periodic_data = []
-FOOOF_iaf_sg_data = []
+# 方法一：FOOOF去除非周期成分 + 平滑 得出的IAF
+method1_iaf_sg_data = []   # SG平滑
+method1_iaf_gs_data = []   # 高斯平滑
+# 方法二：直接对原始功率谱平滑 得出的IAF
+method2_iaf_sg_data = []   # SG平滑
+method2_iaf_gs_data = []   # 高斯平滑
 
 # 直接处理所有符合条件的文件夹
 for folder in sorted(os.listdir(base_path)):
@@ -170,10 +173,7 @@ for i, path in enumerate(data_paths, 1):
     # 功率谱计算：|FFT|² / (采样率 × 窗函数能量)
     power_spectrum = (np.abs(fft_result) ** 2) / (downSampleRate * (window ** 2).sum())
 
-    # 在计算完 power_spectrum 之后，平滑处理之前插入以下代码：
-    # （找到 power_spectrum = ... 这一行后面）
-
-    # ===================== FOOOF分析（在平滑之前）=====================
+    # ===================== FOOOF分析 + 提取周期成分 =====================
     print("\n进行FOOOF分析...")
 
     # 创建FOOOF对象
@@ -182,129 +182,176 @@ for i, path in enumerate(data_paths, 1):
     # 定义感兴趣的频率范围（Alpha波段及其周边）
     freq_range = [3, 30]
 
-    # 存储当前数据路径的FOOOF IAF结果（6个通道）
-    current_fooof_iaf_periodic = []
+    # 初始化周期成分功率谱（去除非周期1/f背景后的功率）
+    periodic_spectrum = np.zeros_like(power_spectrum)
 
-    # 对每个通道进行FOOOF拟合
+    # 对每个通道进行FOOOF拟合，提取周期成分
     for ch in range(num_channels):
         try:
             # 拟合FOOOF模型到原始功率谱
             fm.fit(freqs, power_spectrum[ch], freq_range)
 
-            # 提取peak frequencies（周期性成分的频率）
-            peak_params = fm.peak_params_  # [center_freq, power, bandwidth]
+            # 提取周期成分（去除非周期/1f背景）
+            # fm._ap_fit 是非周期成分在对数空间的拟合
+            # 周期成分 = 原始功率 - 非周期功率（线性空间减法）
+            freq_mask = (freqs >= freq_range[0]) & (freqs <= freq_range[1])
+            ap_linear = 10 ** fm._ap_fit  # 非周期成分转回线性空间
+            periodic_spectrum[ch, freq_mask] = power_spectrum[ch, freq_mask] - ap_linear
+            periodic_spectrum[ch, freq_mask] = np.maximum(periodic_spectrum[ch, freq_mask], 0)
 
-            # 在Alpha频段(8-13Hz)寻找最强的peak作为IAF
-            iaf_periodic = None
-            if len(peak_params) > 0:
-                alpha_peaks = peak_params[(peak_params[:, 0] >= 8) & (peak_params[:, 0] <= 13)]
-                if len(alpha_peaks) > 0:
-                    # 选择功率最大的peak
-                    iaf_periodic = alpha_peaks[np.argmax(alpha_peaks[:, 1]), 0]
-
-            current_fooof_iaf_periodic.append(iaf_periodic if iaf_periodic else np.nan)
-
-            print(
-                f"  通道 {dataname[ch]}: IAF (FOOOF) = {iaf_periodic:.2f} Hz" if iaf_periodic else f"  通道 {dataname[ch]}: 未检测到Alpha峰")
+            print(f"  通道 {dataname[ch]}: FOOOF拟合成功，已提取周期成分")
 
         except Exception as e:
-            print(f"  通道 {dataname[ch]}: FOOOF拟合失败 - {e}")
-            current_fooof_iaf_periodic.append(np.nan)
+            print(f"  通道 {dataname[ch]}: FOOOF拟合失败 - {e}，使用原始功率谱")
+            periodic_spectrum[ch] = power_spectrum[ch]  # 拟合失败时退回原始功率谱
 
-    # 将当前数据的结果添加到总列表中
-    FOOOF_iaf_periodic_data.append(current_fooof_iaf_periodic)
+    # ===================== 平滑处理 =====================
 
-    # ===================== 继续原有的平滑处理 =====================
-
-    # 平滑功率谱曲线，使用两种不同的平滑方法
+    # --- 方法二：直接对原始功率谱做平滑 ---
     # Savitzky-Golay滤波器：251点的窗口，2阶多项式
     power_spectrum_smooth_sg = savgol_filter(power_spectrum, 251, 2)
     # 高斯滤波：标准差为10的高斯核
     power_spectrum_smooth_gs = gaussian_filter1d(power_spectrum, 10)
-    # 存储当前数据路径的高斯平滑IAF
-    current_iaf_gs = []
 
-    # 创建图形窗口，设置标题
-    plt.figure(figsize=(12, 8))
-    plt.suptitle("Multi-channel Power Spectrum Analysis", y=1.02)
+    # --- 方法一：对FOOOF周期成分（去除非周期背景后）做平滑 ---
+    periodic_smooth_sg = savgol_filter(periodic_spectrum, 251, 2)
+    periodic_smooth_gs = gaussian_filter1d(periodic_spectrum, 10)
+
+    # 存储当前数据路径各方法的IAF
+    current_method1_iaf_sg = []  # 方法一 SG平滑
+    current_method1_iaf_gs = []  # 方法一 高斯平滑
+    current_method2_iaf_sg = []  # 方法二 SG平滑
+    current_method2_iaf_gs = []  # 方法二 高斯平滑
+
+    # 创建图形窗口，双列布局：左列方法二，右列方法一
+    plt.figure(figsize=(16, 12))
+    plt.suptitle("IAF对比: 方法二(原始功率谱+平滑) vs 方法一(FOOOF去非周期+平滑)", y=1.02)
+
+    # Alpha频段索引范围
+    alpha_start_idx = 8 * num_samples // downSampleRate
+    alpha_end_idx = 13 * num_samples // downSampleRate
 
     # 为每个通道创建子图进行可视化
     for ch in range(num_channels):
-        ax = plt.subplot(num_channels, 1, ch + 1)  # 创建子图，垂直排列
+        print(f"\n-----------------IAF对比({dataname[ch]}通道)-----------------")
 
-        # 在alpha频段（8-13Hz）内寻找功率最大的频率点
-        # 计算原始数据的最大功率频率
+        # ===== 方法二：直接对原始功率谱平滑 =====
+        # SG平滑 IAF
         max_power_idx = (
-                np.argmax(
-                    power_spectrum[
-                        ch, 8 * num_samples // downSampleRate: 13 * num_samples // downSampleRate
-                    ]
-                )
-                + 8 * num_samples // downSampleRate  # 加上起始索引偏移
+                np.argmax(power_spectrum_smooth_sg[ch, alpha_start_idx:alpha_end_idx])
+                + alpha_start_idx
         )
-        max_freq = freqs[max_power_idx]  # 获取对应的频率值
-        print(f"\n-----------------功率最大频率({dataname[ch]}通道)-----------------")
-        print(f"原始功率最大的频率（蓝色线）: {max_freq:.2f} Hz")
+        method2_sg_freq = freqs[max_power_idx]
+        current_method2_iaf_sg.append(method2_sg_freq)
+        print(f"  方法二 SG平滑 IAF: {method2_sg_freq:.2f} Hz")
 
-        # 计算Savitzky-Golay平滑后数据的最大功率频率
+        # 高斯平滑 IAF
         max_power_idx = (
-                np.argmax(
-                    power_spectrum_smooth_sg[
-                        ch, 8 * num_samples // downSampleRate: 13 * num_samples // downSampleRate
-                    ]
-                )
-                + 8 * num_samples // downSampleRate
+                np.argmax(power_spectrum_smooth_gs[ch, alpha_start_idx:alpha_end_idx])
+                + alpha_start_idx
         )
-        max_freq = freqs[max_power_idx]
-        print(f"Savitzky-Golay平滑功率最大的频率（红色线）: {max_freq:.2f} Hz")
+        method2_gs_freq = freqs[max_power_idx]
+        current_method2_iaf_gs.append(method2_gs_freq)
+        print(f"  方法二 高斯平滑 IAF: {method2_gs_freq:.2f} Hz")
 
-        # 计算高斯平滑后数据的最大功率频率
+        # ===== 方法一：FOOOF去除非周期成分后平滑 =====
+        # SG平滑 IAF
         max_power_idx = (
-                np.argmax(
-                    power_spectrum_smooth_gs[
-                        ch, 8 * num_samples // downSampleRate: 13 * num_samples // downSampleRate
-                    ]
-                )
-                + 8 * num_samples // downSampleRate
+                np.argmax(periodic_smooth_sg[ch, alpha_start_idx:alpha_end_idx])
+                + alpha_start_idx
         )
-        max_freq = freqs[max_power_idx]
-        print(f"高斯平滑功率最大的频率（黄色线）: {max_freq:.2f} Hz")
+        method1_sg_freq = freqs[max_power_idx]
+        current_method1_iaf_sg.append(method1_sg_freq)
+        print(f"  方法一 FOOOF+SG平滑 IAF: {method1_sg_freq:.2f} Hz")
+
+        # 高斯平滑 IAF
+        max_power_idx = (
+                np.argmax(periodic_smooth_gs[ch, alpha_start_idx:alpha_end_idx])
+                + alpha_start_idx
+        )
+        method1_gs_freq = freqs[max_power_idx]
+        current_method1_iaf_gs.append(method1_gs_freq)
+        print(f"  方法一 FOOOF+高斯平滑 IAF: {method1_gs_freq:.2f} Hz")
+
+        # 差值
+        diff_sg = abs(method1_sg_freq - method2_sg_freq)
+        diff_gs = abs(method1_gs_freq - method2_gs_freq)
+        print(f"  SG平滑差值: {diff_sg:.2f} Hz | 高斯平滑差值: {diff_gs:.2f} Hz")
         print(f"-----------------------结束-----------------------")
-        # 存储高斯平滑的IAF
-        current_iaf_gs.append(max_freq)
 
-        # =====================
-        # 4. 可视化设置
-        # =====================
-        # 绘制三种功率谱曲线：原始、SG平滑、高斯平滑
-        plt.semilogy(freqs, power_spectrum[ch], color="blue", linewidth=1)  # 原始（蓝色）
-        plt.semilogy(freqs, power_spectrum_smooth_sg[ch], color="red", linewidth=2)  # SG平滑（红色）
-        plt.semilogy(freqs, power_spectrum_smooth_gs[ch], color="yellow", linewidth=2)  # 高斯平滑（黄色）
-
-        # 坐标轴设置：聚焦alpha频段（5-15Hz）
-        plt.xlim(5, 15)  # X轴范围
-        plt.ylim(1e-16, 1e-10)  # Y轴范围（对数坐标）
-        plt.grid(True, which="both", linestyle="--", alpha=0.6)  # 显示网格
-        plt.ylabel(f"Channel {dataname[ch]}\nPower (V²/Hz)")  # Y轴标签
-
-        # 只在最后一个子图显示X轴标签
+        # ===== 可视化 =====
+        # 左列：方法二 - 原始功率谱 + 平滑
+        ax1 = plt.subplot(num_channels, 2, ch * 2 + 1)
+        plt.semilogy(freqs, power_spectrum[ch], color="blue", linewidth=1, label="原始")
+        plt.semilogy(freqs, power_spectrum_smooth_sg[ch], color="red", linewidth=2, label="SG平滑")
+        plt.semilogy(freqs, power_spectrum_smooth_gs[ch], color="orange", linewidth=2, label="高斯平滑")
+        plt.axvline(x=method2_gs_freq, color="green", linestyle="--", alpha=0.7, label=f"IAF={method2_gs_freq:.1f}Hz")
+        plt.xlim(5, 15)
+        plt.ylim(1e-16, 1e-10)
+        plt.grid(True, which="both", linestyle="--", alpha=0.6)
+        plt.ylabel(f"{dataname[ch]}\nPower (V²/Hz)")
+        if ch == 0:
+            plt.title("方法二: 原始功率谱 + 平滑")
         if ch == num_channels - 1:
             plt.xlabel("Frequency (Hz)")
         else:
-            plt.tick_params(labelbottom=False)  # 隐藏其他子图的X轴标签
+            plt.tick_params(labelbottom=False)
+        if ch == 0:
+            plt.legend(fontsize=7, loc="upper right")
+
+        # 右列：方法一 - FOOOF周期成分 + 平滑
+        ax2 = plt.subplot(num_channels, 2, ch * 2 + 2)
+        plt.plot(freqs, periodic_spectrum[ch], color="blue", linewidth=1, label="周期成分")
+        plt.plot(freqs, periodic_smooth_sg[ch], color="red", linewidth=2, label="SG平滑")
+        plt.plot(freqs, periodic_smooth_gs[ch], color="orange", linewidth=2, label="高斯平滑")
+        plt.axvline(x=method1_gs_freq, color="green", linestyle="--", alpha=0.7, label=f"IAF={method1_gs_freq:.1f}Hz")
+        plt.xlim(5, 15)
+        plt.grid(True, which="both", linestyle="--", alpha=0.6)
+        plt.ylabel(f"{dataname[ch]}\nPeriodic Power")
+        if ch == 0:
+            plt.title("方法一: FOOOF周期成分 + 平滑")
+        if ch == num_channels - 1:
+            plt.xlabel("Frequency (Hz)")
+        else:
+            plt.tick_params(labelbottom=False)
+        if ch == 0:
+            plt.legend(fontsize=7, loc="upper right")
 
     # 调整子图布局，确保不重叠
     plt.tight_layout()
     # 显示图形
     plt.show()
-    FOOOF_iaf_gs_data.append(current_iaf_gs)
 
-# 输出所有数据的avg通道IAF对比
-print("\n" + "="*80)
-print("AVG通道IAF汇总（FOOOF vs 高斯平滑）")
-print("="*80)
+    # 存储当前被试的IAF结果
+    method1_iaf_sg_data.append(current_method1_iaf_sg)
+    method1_iaf_gs_data.append(current_method1_iaf_gs)
+    method2_iaf_sg_data.append(current_method2_iaf_sg)
+    method2_iaf_gs_data.append(current_method2_iaf_gs)
+
+# ===================== 汇总输出：两种方法IAF对比 =====================
+print("\n" + "="*120)
+print("AVG通道 IAF 汇总对比")
+print("方法一: FOOOF去除非周期成分 + 平滑    方法二: 直接原始功率谱 + 平滑")
+print("="*120)
+print(f"{'序号':<6}{'被试':<30}{'方法一SG':<12}{'方法一GS':<12}{'方法二SG':<12}{'方法二GS':<12}{'差值SG':<10}{'差值GS':<10}")
+print("-"*120)
+
+all_diff_sg = []
+all_diff_gs = []
 for i, path in enumerate(data_paths, 1):
-    fooof_iaf = FOOOF_iaf_periodic_data[i-1][5]  # avg通道索引为5
-    gs_iaf = FOOOF_iaf_gs_data[i-1][5]
-    print(f"{i}. {os.path.basename(path)}")
-    print(f"   FOOOF IAF: {fooof_iaf:.2f} Hz | 高斯平滑 IAF: {gs_iaf:.2f} Hz | 差值: {abs(fooof_iaf - gs_iaf):.2f} Hz")
+    m1_sg = method1_iaf_sg_data[i-1][5]  # avg通道索引为5
+    m1_gs = method1_iaf_gs_data[i-1][5]
+    m2_sg = method2_iaf_sg_data[i-1][5]
+    m2_gs = method2_iaf_gs_data[i-1][5]
+    diff_sg = abs(m1_sg - m2_sg)
+    diff_gs = abs(m1_gs - m2_gs)
+    all_diff_sg.append(diff_sg)
+    all_diff_gs.append(diff_gs)
+    print(f"{i:<6}{os.path.basename(path):<30}{m1_sg:<12.2f}{m1_gs:<12.2f}{m2_sg:<12.2f}{m2_gs:<12.2f}{diff_sg:<10.2f}{diff_gs:<10.2f}")
+
+print("-"*120)
+print(f"{'平均差值':<72}{np.nanmean(all_diff_sg):<10.2f}{np.nanmean(all_diff_gs):<10.2f}")
+print(f"{'最大差值':<72}{np.nanmax(all_diff_sg):<10.2f}{np.nanmax(all_diff_gs):<10.2f}")
+print(f"{'最小差值':<72}{np.nanmin(all_diff_sg):<10.2f}{np.nanmin(all_diff_gs):<10.2f}")
+print(f"{'标准差':<72}{np.nanstd(all_diff_sg):<10.2f}{np.nanstd(all_diff_gs):<10.2f}")
+print("="*120)
