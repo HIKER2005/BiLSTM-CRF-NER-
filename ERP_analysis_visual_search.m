@@ -296,20 +296,24 @@ for i = 1:nSubj
             end
         end
         
-        % ---- Step 2: 为每个41-locked epoch分配条件 ----
+        % ---- Step 2: 为每个41/42-locked epoch分配条件 ----
         % 策略：
         %   反应类型 → 在当前epoch的事件列表中，查找latency>0的12/22/32
         %   刺激类型 → 先查当前epoch事件列表(latency<0的11/21/31)
         %              若找不到，再按epoch时间顺序向前查找前面epoch的锁时事件
-        %              (因为epoch按时间排列，所以前面的epoch对应更早的事件)
+        %   编码规则：
+        %     有目标(41): stim_code*100 + resp_code  (如 101, 201, 301)
+        %     无目标(42): stim_code*100 + resp_code + 1000  (如 1101, 1201, 1301)
         
         epoch_condition = zeros(1, EEG.trials);  % 0=未分配
         debug_no_stim = 0;
         debug_no_resp = 0;
         
         for ep = 1:EEG.trials
-            % 只处理以41为锁时点的epoch
-            if time_lock_types(ep) ~= target_marker
+            % 处理以41或42为锁时点的epoch
+            is_target = (time_lock_types(ep) == target_marker);
+            is_notarget = (time_lock_types(ep) == no_target_marker);
+            if ~is_target && ~is_notarget
                 continue;
             end
             
@@ -384,7 +388,11 @@ for i = 1:nSubj
             
             % ---- 分配条件编码 ----
             if stim_code > 0 && resp_code > 0
-                epoch_condition(ep) = stim_code * 100 + resp_code;
+                base_code = stim_code * 100 + resp_code;  % 如 101, 201, 301
+                if is_notarget
+                    base_code = base_code + 1000;  % 无目标: 1101, 1201, 1301
+                end
+                epoch_condition(ep) = base_code;
             else
                 if stim_code == 0, debug_no_stim = debug_no_stim + 1; end
                 if resp_code == 0, debug_no_resp = debug_no_resp + 1; end
@@ -403,30 +411,48 @@ for i = 1:nSubj
             fprintf('  [调试] 警告：没有任何epoch被成功分配条件！\n');
         end
         
-        fprintf('  条件分配统计（以标记41为锁时点的epoch）:\n');
+        fprintf('  条件分配统计 —— 有目标(41):\n');
         for c = 1:length(Cond_markers)
             n_ep = sum(epoch_condition == Cond_markers(c));
             fprintf('    %s (编码 %d): %d 个 epoch\n', Cond_names{c}, Cond_markers(c), n_ep);
         end
-        n_unassigned_41 = sum(time_lock_types == target_marker & epoch_condition == 0);
-        if n_unassigned_41 > 0
-            fprintf('    未能分配条件的41-epoch: %d 个 (找不到刺激: %d, 找不到反应: %d)\n', ...
-                n_unassigned_41, debug_no_stim, debug_no_resp);
+        fprintf('  条件分配统计 —— 无目标(42):\n');
+        NT_correct_markers = [1101, 1201, 1301];
+        NT_names = {'A_NT_correct', 'B_NT_correct', 'C_NT_correct'};
+        for c = 1:3
+            n_ep = sum(epoch_condition == NT_correct_markers(c));
+            fprintf('    %s (编码 %d): %d 个 epoch\n', NT_names{c}, NT_correct_markers(c), n_ep);
         end
-        n_non41 = sum(time_lock_types ~= target_marker);
-        fprintf('    非41锁时的epoch（已忽略）: %d 个\n', n_non41);
+        n_unassigned = sum(ismember(time_lock_types, [target_marker, no_target_marker]) & epoch_condition == 0);
+        if n_unassigned > 0
+            fprintf('    未能分配条件的41/42-epoch: %d 个 (找不到刺激: %d, 找不到反应: %d)\n', ...
+                n_unassigned, debug_no_stim, debug_no_resp);
+        end
         
-        % ---- Step 3: 按条件选择epoch并计算平均 ----
+        % ---- Step 3: 按条件选择epoch并计算平均（有目标 + 无目标）----
+        % 有目标条件
         for j = 1:nCond
             cond_epoch_idx = find(epoch_condition == Cond_markers(j));
-            fprintf('  条件 %s (编码 %d): %d 个 epoch\n', Cond_names{j}, Cond_markers(j), length(cond_epoch_idx));
-            
+            fprintf('  [有目标] %s (编码 %d): %d 个 epoch\n', Cond_names{j}, Cond_markers(j), length(cond_epoch_idx));
             if ~isempty(cond_epoch_idx)
                 EEG_temp = pop_select(EEG, 'trial', cond_epoch_idx);
                 data(i, j, :, :) = squeeze(mean(EEG_temp.data, 3));
             else
-                warning('  被试 %d (%s) 条件 %s 无有效 epoch！', i, file_name, Cond_names{j});
+                warning('  被试 %d 条件 %s 无有效 epoch！', i, Cond_names{j});
                 data(i, j, :, :) = zeros(EEG.nbchan, EEG.pnts);
+            end
+        end
+        
+        % 无目标条件（A/B/C 正确反应，用于 SSVEP 减法）
+        for c = 1:3
+            nt_epoch_idx = find(epoch_condition == NT_correct_markers(c));
+            fprintf('  [无目标] %s (编码 %d): %d 个 epoch\n', NT_names{c}, NT_correct_markers(c), length(nt_epoch_idx));
+            if ~isempty(nt_epoch_idx)
+                EEG_temp = pop_select(EEG, 'trial', nt_epoch_idx);
+                data_nt(i, c, :, :) = squeeze(mean(EEG_temp.data, 3));
+            else
+                warning('  被试 %d 无目标条件 %s 无有效 epoch！', i, NT_names{c});
+                data_nt(i, c, :, :) = zeros(EEG.nbchan, EEG.pnts);
             end
         end
     end
@@ -441,7 +467,7 @@ EEG.chanlocs = chanloc;
 
 % 保存数据
 save_path = fullfile(file_path, 'all_data.mat');
-save(save_path, 'data', 'EEG', 'Subj', 'SubjFiles', 'Cond_names', 'Cond_markers', ...
+save(save_path, 'data', 'data_nt', 'EEG', 'Subj', 'SubjFiles', 'Cond_names', 'Cond_markers', ...
     'chan_idx', 'chan_of_interest', 'chan_indices', 'chans_of_interest');
 fprintf('\n数据已保存至: %s\n', save_path);
 fprintf('data 维度: %s (被试 × 条件 × 电极 × 时间点)\n', mat2str(size(data)));
@@ -912,6 +938,171 @@ for ci = 1:nChans
     fclose(fid);
     
     fprintf('电极 %s 的数据已导出 (N2振幅/潜伏期, P3振幅/潜伏期)\n', ch_name);
+end
+
+%% ========================================================================
+%% ===== Part 8: SSVEP 减法 —— 有目标 - 无目标，提取目标诱发 ERP =========
+%% ========================================================================
+% 原理：SSVEP 成分在有目标和无目标条件中都存在（均为闪烁光刺激）
+%       通过 有目标ERP - 无目标ERP 可以消除 SSVEP 干扰
+%       得到纯粹的目标图像诱发的 ERP 成分
+
+fprintf('\n====== Part 8: SSVEP 减法分析 (有目标 - 无目标) ======\n');
+
+% 计算差值：data_diff = data(正确条件1:3) - data_nt(1:3)
+% 维度: 被试 × 3条件 × 电极 × 时间点
+data_diff = data(:, 1:3, :, :) - data_nt(:, 1:3, :, :);
+fprintf('data_diff 维度: %s (被试 × 条件 × 电极 × 时间点)\n', mat2str(size(data_diff)));
+
+Cond_labels_diff = {'A (目标-非目标)', 'B (目标-非目标)', 'C (目标-非目标)'};
+
+%% ---- 8.1 多电极：目标诱发ERP波形（SSVEP已消除）----
+figure('Name', '目标诱发ERP (SSVEP已消除) - 多电极', 'NumberTitle', 'off', ...
+    'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
+
+for ci = 1:nChans
+    ch = chan_indices(ci);
+    subplot(nRows, nCols, ci);
+    hold on; set(gca, 'YDir', 'reverse');
+    for c = 1:3
+        plot(EEG.times, squeeze(mean(data_diff(:, c, ch, :), 1)), ...
+            'Color', colors_correct{c}, 'LineWidth', 1.5);
+    end
+    xlim(disp_xlim);
+    line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
+    line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
+    title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
+    xlabel('ms'); ylabel('\muV');
+    if ci == 1
+        legend('A', 'B', 'C', 'Location', 'best', 'FontSize', 9);
+    end
+    box off;
+end
+sgtitle('目标诱发ERP波形 (有目标 - 无目标, SSVEP已消除)', 'fontsize', 15, 'FontWeight', 'bold');
+
+%% ---- 8.2 多电极：有目标 vs 无目标 对比（每个电极单独看原始与差值）----
+figure('Name', '有目标 vs 无目标 vs 差值 - 多电极', 'NumberTitle', 'off', ...
+    'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
+
+for ci = 1:nChans
+    ch = chan_indices(ci);
+    subplot(nRows, nCols, ci);
+    hold on; set(gca, 'YDir', 'reverse');
+    
+    % 三种条件平均（所有刺激类型合并）
+    target_avg    = squeeze(mean(mean(data(:, 1:3, ch, :), 1), 2));
+    nontarget_avg = squeeze(mean(mean(data_nt(:, 1:3, ch, :), 1), 2));
+    diff_avg      = squeeze(mean(mean(data_diff(:, 1:3, ch, :), 1), 2));
+    
+    plot(EEG.times, target_avg, '-r', 'LineWidth', 1.5);
+    plot(EEG.times, nontarget_avg, '-b', 'LineWidth', 1.5);
+    plot(EEG.times, diff_avg, '-k', 'LineWidth', 2);
+    
+    xlim(disp_xlim);
+    line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
+    line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
+    title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
+    xlabel('ms'); ylabel('\muV');
+    if ci == 1
+        legend('有目标', '无目标', '差值(目标诱发ERP)', 'Location', 'best', 'FontSize', 7);
+    end
+    box off;
+end
+sgtitle('有目标 vs 无目标 vs 目标诱发ERP (SSVEP消除)', 'fontsize', 15, 'FontWeight', 'bold');
+
+%% ---- 8.3 目标诱发ERP的N2和P3分析（多电极）----
+fprintf('\n====== 目标诱发ERP (SSVEP消除后) 各电极N2/P3 ======\n');
+
+for ci = 1:nChans
+    ch = chan_indices(ci);
+    ch_name = chans_of_interest{ci};
+    
+    N2_amp_diff = zeros(nSubj, 3);
+    N2_lat_diff = zeros(nSubj, 3);
+    P3_amp_diff = zeros(nSubj, 3);
+    P3_lat_diff = zeros(nSubj, 3);
+    
+    for s = 1:nSubj
+        for c = 1:3
+            wave = squeeze(data_diff(s, c, ch, :));
+            [min_val, min_pos] = min(wave(N2_win_idx));
+            N2_amp_diff(s, c) = min_val;
+            N2_lat_diff(s, c) = EEG.times(N2_win_idx(min_pos));
+            [max_val, max_pos] = max(wave(P3_win_idx));
+            P3_amp_diff(s, c) = max_val;
+            P3_lat_diff(s, c) = EEG.times(P3_win_idx(max_pos));
+        end
+    end
+    
+    fprintf('\n  [%s] 目标诱发ERP N2:\n', ch_name);
+    fprintf('  条件\t\t平均振幅(uV)\t标准差\t\t平均潜伏期(ms)\t标准差\n');
+    for c = 1:3
+        fprintf('  %s\t%.2f\t\t%.2f\t\t%.1f\t\t%.1f\n', ...
+            Cond_names{c}, mean(N2_amp_diff(:,c)), std(N2_amp_diff(:,c)), ...
+            mean(N2_lat_diff(:,c)), std(N2_lat_diff(:,c)));
+    end
+    fprintf('  [%s] 目标诱发ERP P3:\n', ch_name);
+    fprintf('  条件\t\t平均振幅(uV)\t标准差\t\t平均潜伏期(ms)\t标准差\n');
+    for c = 1:3
+        fprintf('  %s\t%.2f\t\t%.2f\t\t%.1f\t\t%.1f\n', ...
+            Cond_names{c}, mean(P3_amp_diff(:,c)), std(P3_amp_diff(:,c)), ...
+            mean(P3_lat_diff(:,c)), std(P3_lat_diff(:,c)));
+    end
+end
+
+%% ---- 8.4 目标诱发ERP 地形图 ----
+figure('Name', '目标诱发ERP 地形图 (SSVEP消除)', 'NumberTitle', 'off');
+
+subplot(141);
+topoplot(squeeze(mean(mean(data_diff(:, 1:3, :, P1_idx), 1), 2)), EEG.chanlocs);
+title(sprintf('P1 (%d ms)', P1_peak_ms), 'fontsize', 12);
+
+subplot(142);
+topoplot(squeeze(mean(mean(data_diff(:, 1:3, :, N1_idx), 1), 2)), EEG.chanlocs);
+title(sprintf('N1 (%d ms)', N1_peak_ms), 'fontsize', 12);
+
+subplot(143);
+topoplot(squeeze(mean(mean(data_diff(:, 1:3, :, N2_idx), 1), 2)), EEG.chanlocs);
+title(sprintf('N2 (%d ms)', N2_peak_ms), 'fontsize', 12);
+
+subplot(144);
+topoplot(squeeze(mean(mean(data_diff(:, 1:3, :, P3_idx), 1), 2)), EEG.chanlocs);
+title(sprintf('P3 (%d ms)', P3_peak_ms), 'fontsize', 12);
+
+sgtitle('目标诱发ERP 地形图 (有目标-无目标)', 'fontsize', 14, 'FontWeight', 'bold');
+
+%% ---- 8.5 导出目标诱发ERP数据 ----
+for ci = 1:nChans
+    ch = chan_indices(ci);
+    ch_name = chans_of_interest{ci};
+    
+    % N2 平均振幅
+    fname = fullfile(file_path, sprintf('TargetERP_N2_amplitude_%s.csv', ch_name));
+    fid = fopen(fname, 'w');
+    fprintf(fid, 'Subject,A_correct,B_correct,C_correct\n');
+    for si = 1:nSubj
+        N2_mean_diff = zeros(1, 3);
+        for c = 1:3
+            N2_mean_diff(c) = mean(squeeze(data_diff(si, c, ch, N2_start_idx:N2_end_idx)));
+        end
+        fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, N2_mean_diff(1), N2_mean_diff(2), N2_mean_diff(3));
+    end
+    fclose(fid);
+    
+    % P3 平均振幅
+    fname = fullfile(file_path, sprintf('TargetERP_P3_amplitude_%s.csv', ch_name));
+    fid = fopen(fname, 'w');
+    fprintf(fid, 'Subject,A_correct,B_correct,C_correct\n');
+    for si = 1:nSubj
+        P3_mean_diff = zeros(1, 3);
+        for c = 1:3
+            P3_mean_diff(c) = mean(squeeze(data_diff(si, c, ch, P3_start_idx:P3_end_idx)));
+        end
+        fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, P3_mean_diff(1), P3_mean_diff(2), P3_mean_diff(3));
+    end
+    fclose(fid);
+    
+    fprintf('电极 %s 目标诱发ERP数据已导出\n', ch_name);
 end
 
 fprintf('\n====== 所有分析完成！ ======\n');
