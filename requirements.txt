@@ -6,3 +6,6 @@ tqdm>=4.60.0
 scikit-learn>=0.24.0
 requests>=2.25.0
 colorama>=0.4.4
+mne>=1.0.0
+fooof>=1.0.0
+scipy>=1.7.0
