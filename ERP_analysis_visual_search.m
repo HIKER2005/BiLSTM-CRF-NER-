@@ -695,38 +695,113 @@ for c = 1:3
 end
 sgtitle(sprintf('图%d 各条件 P3 地形图', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
 
-%% ---- 3.5 三种正确条件在 -100 ~ 800 ms 时间窗上的平均ERP幅值地形图（组平均） ----
-fprintf('\n====== 绘制三种正确条件在 -0.1~0.8s 上的平均ERP幅值地形图 ======\n');
+%% ---- 3.5 多条件逐时间窗地形图矩阵（时空演变图）----
+% 每行 = 一个条件，每列 = 一个时间窗口，每行独立色标
+% 类似 ERP 文献中常见的 topoplot 序列图
+fprintf('\n====== 绘制多条件逐时间窗地形图矩阵 ======\n');
 
-t_start_ms = epoch_window(1) * 1000;  % -100
-t_end_ms   = epoch_window(2) * 1000;  % 800
-idx_start = find(EEG.times >= t_start_ms, 1, 'first');
-idx_end   = find(EEG.times <= t_end_ms, 1, 'last');
-if isempty(idx_start) || isempty(idx_end)
-    warning('无法在 EEG.times 中找到指定的时间窗口索引，请检查 EEG.times 和 epoch_window 设置。');
+topo_step_ms  = 50;   %%% 时间步长(ms)，控制列数
+topo_half_win = 25;    %%% 每个地形图取中心时间 ±25ms 的平均值
+topo_times_ms = (epoch_window(1)*1000) : topo_step_ms : (epoch_window(2)*1000);
+nTopo = length(topo_times_ms);
+
+if include_error && nCond >= 6
+    plot_nCond_topo = 6;
 else
-    avg_amp_cond = zeros(3, EEG.nbchan);
-    for c = 1:3
-        tmp = squeeze(mean(mean(data(:, c, :, idx_start:idx_end), 1), 4));
-        avg_amp_cond(c, :) = tmp(:)';
+    plot_nCond_topo = 3;
+end
+
+% 预计算地形图数据: 条件 × 时间窗 × 电极
+topo_data = zeros(plot_nCond_topo, nTopo, EEG.nbchan);
+for c = 1:plot_nCond_topo
+    for ti = 1:nTopo
+        t_idx = find(EEG.times >= (topo_times_ms(ti) - topo_half_win) & ...
+                     EEG.times <= (topo_times_ms(ti) + topo_half_win));
+        if isempty(t_idx)
+            [~, t_idx] = min(abs(EEG.times - topo_times_ms(ti)));
+        end
+        topo_data(c, ti, :) = squeeze(mean(mean(data(:, c, :, t_idx), 1), 4));
+    end
+end
+
+% 计算每行（条件）的色标范围
+row_clim = zeros(plot_nCond_topo, 1);
+for c = 1:plot_nCond_topo
+    row_data = squeeze(topo_data(c, :, :));
+    row_clim(c) = max(abs(row_data(:)));
+    if row_clim(c) < 0.01, row_clim(c) = 1; end
+end
+
+% 布局参数
+margin_l = 0.07;   % 左边距（放条件名）
+margin_r = 0.05;   % 右边距（放 colorbar）
+margin_t = 0.06;   % 上边距（放标题）
+margin_b = 0.02;   % 下边距
+cbar_w   = 0.02;   % colorbar 宽度
+gap_x    = 0.002;  % 列间距
+gap_y    = 0.005;  % 行间距
+cell_w = (1 - margin_l - margin_r - cbar_w - gap_x*(nTopo-1)) / nTopo;
+cell_h = (1 - margin_t - margin_b - gap_y*(plot_nCond_topo-1)) / plot_nCond_topo;
+
+fig_num = fig_num + 1;
+fig_w = min(1920, max(1200, nTopo * 80 + 150));
+fig_h = min(1000, max(400, plot_nCond_topo * 130 + 60));
+fig_topo = figure('Name', sprintf('图%d 各条件ERP地形图时空演变', fig_num), ...
+    'NumberTitle', 'off', 'Color', 'w', ...
+    'Position', [10 10 fig_w fig_h]);
+
+for c = 1:plot_nCond_topo
+    cl = row_clim(c);
+    row_bottom = 1 - margin_t - c * cell_h - (c-1) * gap_y;
+
+    for ti = 1:nTopo
+        col_left = margin_l + (ti-1) * (cell_w + gap_x);
+        ax = axes('Position', [col_left, row_bottom, cell_w, cell_h]);
+
+        topoplot(squeeze(topo_data(c, ti, :)), EEG.chanlocs, ...
+            'maplimits', [-cl cl], ...
+            'electrodes', 'pts', 'conv', 'on', ...
+            'shading', 'interp', 'style', 'map');
+        colormap(ax, jet);
+
+        if c == 1
+            title(sprintf('%d', topo_times_ms(ti)), 'FontSize', 7, 'FontWeight', 'normal');
+        end
     end
 
-    fig_num = fig_num + 1;
-    figure('Name', sprintf('图%d 三条件 -0.1~0.8s 平均ERP幅值地形图', fig_num), 'NumberTitle', 'off');
-    for c = 1:3
-        subplot(1,3,c);
-        topoplot(avg_amp_cond(c, :), EEG.chanlocs, 'maplimits', 'maxmin');
-        title(sprintf('%s\n-100~800 ms 平均 (%s)', Cond_names{c}, Cond_names{c}), 'fontsize', 11);
-    end
-    sgtitle(sprintf('图%d 三种正确条件在 -0.1~0.8 s 时间窗上组平均幅值', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
+    % 行右侧 colorbar
+    cb_left   = 1 - margin_r - cbar_w + 0.005;
+    cb_bottom = row_bottom + cell_h * 0.15;
+    cb_h      = cell_h * 0.7;
+    ax_cb = axes('Position', [cb_left, cb_bottom, cbar_w * 0.4, cb_h]);
+    imagesc(ax_cb, 1, linspace(-cl, cl, 256), linspace(-cl, cl, 256)');
+    set(ax_cb, 'YDir', 'normal', 'XTick', [], 'YAxisLocation', 'right', 'FontSize', 6);
+    yticks(ax_cb, [-cl, 0, cl]);
+    yticklabels(ax_cb, {sprintf('%.1f', -cl), '0', sprintf('%.1f', cl)});
+    colormap(ax_cb, jet);
 
-    try
-        save_fname = fullfile(file_path, sprintf('Topomap_CondA_B_C__-100_800ms.png'));
-        saveas(gcf, save_fname);
-        fprintf('已保存地形图至: %s\n', save_fname);
-    catch
-        warning('保存地形图失败，请检查 file_path 是否可写。');
-    end
+    % 行左侧条件名
+    cond_label = strrep(Cond_names{c}, '_', ' ');
+    annotation(fig_topo, 'textbox', ...
+        [0, row_bottom, margin_l, cell_h], ...
+        'String', cond_label, 'EdgeColor', 'none', ...
+        'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+        'FontSize', 9, 'FontWeight', 'bold', 'Interpreter', 'none');
+end
+
+sgtitle(sprintf('图%d 各条件ERP地形图时空演变 (每%dms, \\pm%dms平均, 单位ms)', ...
+    fig_num, topo_step_ms, topo_half_win), 'fontsize', 13, 'FontWeight', 'bold');
+
+% 保存图片
+try
+    save_fname = fullfile(file_path, 'Topomap_timeseries_all_conditions.png');
+    saveas(gcf, save_fname);
+    fprintf('已保存地形图序列至: %s\n', save_fname);
+    save_fname_fig = fullfile(file_path, 'Topomap_timeseries_all_conditions.fig');
+    savefig(gcf, save_fname_fig);
+    fprintf('已保存 .fig 文件至: %s\n', save_fname_fig);
+catch
+    warning('保存地形图序列失败，请检查 file_path 是否可写。');
 end
 
 %% ========================================================================
