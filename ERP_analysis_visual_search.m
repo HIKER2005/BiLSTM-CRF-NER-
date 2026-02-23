@@ -759,13 +759,10 @@ for c = 1:plot_nCond_topo
     end
 end
 
-% 计算每行（条件）的色标范围
-row_clim = zeros(plot_nCond_topo, 1);
-for c = 1:plot_nCond_topo
-    row_data = squeeze(topo_data(c, :, :));
-    row_clim(c) = max(abs(row_data(:)));
-    if row_clim(c) < 0.01, row_clim(c) = 1; end
-end
+% 计算全局统一色标范围（所有条件、所有时间窗取最大绝对值）
+global_clim = max(abs(topo_data(:)));
+if global_clim < 0.01, global_clim = 1; end
+fprintf('地形图统一色标范围: [%.2f, %.2f] μV\n', -global_clim, global_clim);
 
 % 布局参数
 margin_l = 0.07;   % 左边距（放条件名）
@@ -786,7 +783,6 @@ fig_topo = figure('Name', sprintf('图%d 各条件ERP地形图时空演变', fig
     'Position', [10 10 fig_w fig_h]);
 
 for c = 1:plot_nCond_topo
-    cl = row_clim(c);
     row_bottom = 1 - margin_t - c * cell_h - (c-1) * gap_y;
 
     for ti = 1:nTopo
@@ -794,7 +790,7 @@ for c = 1:plot_nCond_topo
         ax = axes('Position', [col_left, row_bottom, cell_w, cell_h]);
 
         topoplot(squeeze(topo_data(c, ti, :)), EEG.chanlocs, ...
-            'maplimits', [-cl cl], ...
+            'maplimits', [-global_clim global_clim], ...
             'electrodes', 'pts', 'conv', 'on', ...
             'shading', 'interp', 'style', 'map');
         colormap(ax, jet);
@@ -804,17 +800,6 @@ for c = 1:plot_nCond_topo
         end
     end
 
-    % 行右侧 colorbar
-    cb_left   = 1 - margin_r - cbar_w + 0.005;
-    cb_bottom = row_bottom + cell_h * 0.15;
-    cb_h      = cell_h * 0.7;
-    ax_cb = axes('Position', [cb_left, cb_bottom, cbar_w * 0.4, cb_h]);
-    imagesc(ax_cb, 1, linspace(-cl, cl, 256), linspace(-cl, cl, 256)');
-    set(ax_cb, 'YDir', 'normal', 'XTick', [], 'YAxisLocation', 'right', 'FontSize', 6);
-    yticks(ax_cb, [-cl, 0, cl]);
-    yticklabels(ax_cb, {sprintf('%.1f', -cl), '0', sprintf('%.1f', cl)});
-    colormap(ax_cb, jet);
-
     % 行左侧条件名
     cond_label = strrep(Cond_names{c}, '_', ' ');
     annotation(fig_topo, 'textbox', ...
@@ -823,6 +808,19 @@ for c = 1:plot_nCond_topo
         'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
         'FontSize', 9, 'FontWeight', 'bold', 'Interpreter', 'none');
 end
+
+% 右侧统一 colorbar（所有条件共用同一色标）
+total_h = plot_nCond_topo * cell_h + (plot_nCond_topo - 1) * gap_y;
+cb_left   = 1 - margin_r - cbar_w + 0.005;
+cb_bottom = 1 - margin_t - total_h + total_h * 0.1;
+cb_h      = total_h * 0.8;
+ax_cb = axes('Position', [cb_left, cb_bottom, cbar_w * 0.5, cb_h]);
+imagesc(ax_cb, 1, linspace(-global_clim, global_clim, 256), linspace(-global_clim, global_clim, 256)');
+set(ax_cb, 'YDir', 'normal', 'XTick', [], 'YAxisLocation', 'right', 'FontSize', 7);
+yticks(ax_cb, [-global_clim, 0, global_clim]);
+yticklabels(ax_cb, {sprintf('%.1f', -global_clim), '0', sprintf('%.1f', global_clim)});
+colormap(ax_cb, jet);
+ylabel(ax_cb, '\muV', 'FontSize', 8);
 
 sgtitle(sprintf('图%d 各条件ERP地形图时空演变 (SSVEP已消除, 每%dms, \\pm%dms平均)', ...
     fig_num, topo_step_ms, topo_half_win), 'fontsize', 13, 'FontWeight', 'bold');
