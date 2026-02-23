@@ -28,7 +28,7 @@
 %% ========================================================================
 
 clear; clc;
-script_version = 'v7_2026-02-23';
+script_version = 'v8_2026-02-23';
 fprintf('\n====== ERP分析脚本 版本: %s ======\n', script_version);
 fprintf('如果版本号不是 %s，请重新下载脚本！\n\n', script_version);
 eeglab;
@@ -520,11 +520,47 @@ if apply_lowpass
     end
 end
 
+%% ========================= SSVEP 消除：correct - incorrect =========================
+% 原理：SSVEP（稳态视觉诱发电位）在正确和错误试次中均同时存在，
+%       因为 SSVEP 由闪烁光的物理频率驱动，与反应正误无关。
+%       通过 (正确反应ERP) - (错误反应ERP)，SSVEP 成分相消，
+%       剩余信号反映正确与错误反应之间的差异性认知 ERP 成分。
+%   A: data(:,1,:,:) - data(:,4,:,:)   即 A_correct(101) - A_incorrect(102)
+%   B: data(:,2,:,:) - data(:,5,:,:)   即 B_correct(201) - B_incorrect(202)
+%   C: data(:,3,:,:) - data(:,6,:,:)   即 C_correct(301) - C_incorrect(302)
+fprintf('\n====== SSVEP 消除: correct - incorrect ======\n');
+
+if size(data, 2) >= 6
+    data_raw = data;                    % 保存滤波后的原始6条件数据（用于参考图）
+    Cond_names_raw = Cond_names;        % 保存原始条件名
+
+    data = data_raw(:, 1:3, :, :) - data_raw(:, 4:6, :, :);
+    Cond_names = {'A (corr-incorr)', 'B (corr-incorr)', 'C (corr-incorr)'};
+    nCond = 3;
+
+    fprintf('  A: %d 个被试, correct - incorrect\n', size(data, 1));
+    fprintf('  B: %d 个被试, correct - incorrect\n', size(data, 1));
+    fprintf('  C: %d 个被试, correct - incorrect\n', size(data, 1));
+    fprintf('data 维度: %s (被试 × 条件 × 电极 × 时间点)\n', mat2str(size(data)));
+    fprintf('SSVEP 消除完成！后续所有分析均使用差异波 (correct - incorrect)。\n');
+
+    % 保存 SSVEP 消除后的数据
+    save_path_sub = fullfile(file_path, 'all_data_SSVEP_removed.mat');
+    save(save_path_sub, 'data', 'data_raw', 'EEG', 'Subj', 'SubjFiles', ...
+        'Cond_names', 'Cond_names_raw', 'Cond_markers', ...
+        'chan_idx', 'chan_of_interest', 'chan_indices', 'chans_of_interest', 'srate');
+    fprintf('SSVEP消除后数据已保存至: %s\n', save_path_sub);
+else
+    warning('数据不包含6个条件（正确+错误），无法执行 SSVEP 消除！请确保 include_error = true。');
+    data_raw = data;
+    Cond_names_raw = Cond_names;
+end
+
 %% ========================================================================
 %% ========================= Part 2: 画波形图（多电极）====================
 %% ========================================================================
-% 以下画图部分使用保存好的 data，可以直接 load 后运行
-% load(fullfile(file_path, 'all_data.mat'));
+% 以下画图部分使用 SSVEP 消除后的 data（correct - incorrect）
+% load(fullfile(file_path, 'all_data_SSVEP_removed.mat'));
 
 colors_correct = {'r', 'b', 'k'};  % A=红, B=蓝, C=黑
 nChans = length(chans_of_interest);
@@ -556,43 +592,42 @@ for ci = 1:nChans
     title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
     xlabel('ms'); ylabel('\muV');
     if ci == 1
-        legend('A-正确', 'B-正确', 'C-正确', 'Location', 'best', 'FontSize', 8);
+        legend('A (corr-incorr)', 'B (corr-incorr)', 'C (corr-incorr)', 'Location', 'best', 'FontSize', 8);
     end
     box off;
 end
-sgtitle(sprintf('图%d 三种刺激条件组平均波形 (正确反应)', fig_num), 'fontsize', 15, 'FontWeight', 'bold');
+sgtitle(sprintf('图%d 三种刺激条件组平均波形 (SSVEP已消除: correct-incorrect)', fig_num), 'fontsize', 15, 'FontWeight', 'bold');
 
-%% ---- 2.2 如果包含错误条件，所有电极正确 vs 错误对比 ----
-if include_error && nCond >= 6
+%% ---- 2.2 SSVEP 消除参考图：正确 vs 错误 vs 差异波 ----
+% 展示减法过程：原始正确（红实线）、原始错误（蓝虚线）、差异波=SSVEP消除（黑粗线）
+if exist('data_raw', 'var') && size(data_raw, 2) >= 6
     fig_num = fig_num + 1;
-    figure('Name', sprintf('图%d 多电极正确 vs 错误对比', fig_num), 'NumberTitle', 'off', ...
+    figure('Name', sprintf('图%d SSVEP消除参考: 正确 vs 错误 vs 差异波', fig_num), 'NumberTitle', 'off', ...
         'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
     for ci = 1:nChans
         ch = chan_indices(ci);
         subplot(nRows, nCols, ci);
         hold on; set(gca, 'YDir', 'reverse');
-        % 正确条件（实线）
-        for c = 1:3
-            plot(EEG.times, squeeze(mean(data(:, c, ch, :), 1)), ...
-                'Color', colors_correct{c}, 'LineWidth', 1.5, 'LineStyle', '-');
-        end
-        % 错误条件（虚线）
-        for c = 4:6
-            plot(EEG.times, squeeze(mean(data(:, c, ch, :), 1)), ...
-                'Color', colors_correct{c-3}, 'LineWidth', 1.5, 'LineStyle', '--');
-        end
+        % 三种刺激类型合并的组平均
+        correct_avg   = squeeze(mean(mean(data_raw(:, 1:3, ch, :), 1), 2));
+        incorrect_avg = squeeze(mean(mean(data_raw(:, 4:6, ch, :), 1), 2));
+        diff_avg      = squeeze(mean(mean(data(:, 1:3, ch, :), 1), 2));
+        plot(EEG.times, correct_avg, '-r', 'LineWidth', 1.5);
+        plot(EEG.times, incorrect_avg, '--b', 'LineWidth', 1.5);
+        plot(EEG.times, diff_avg, '-k', 'LineWidth', 2.0);
         xlim(disp_xlim);
         line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
         line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
         title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
         xlabel('ms'); ylabel('\muV');
         if ci == 1
-            legend('A-正确','B-正确','C-正确','A-错误','B-错误','C-错误', ...
+            legend('正确(含SSVEP)', '错误(含SSVEP)', '差异波(SSVEP已消除)', ...
                 'Location', 'best', 'FontSize', 7);
         end
         box off;
     end
-    sgtitle(sprintf('图%d 正确 vs 错误反应对比 (实线=正确, 虚线=错误)', fig_num), 'fontsize', 15, 'FontWeight', 'bold');
+    sgtitle(sprintf('图%d SSVEP消除参考 (红=正确, 蓝虚=错误, 黑粗=correct-incorrect)', fig_num), ...
+        'fontsize', 15, 'FontWeight', 'bold');
 end
 
 %% ---- 2.3 所有电极差异波 ----
@@ -617,7 +652,7 @@ for ci = 1:nChans
     end
     box off;
 end
-sgtitle(sprintf('图%d 差异波 (B-A 和 C-A)', fig_num), 'fontsize', 15, 'FontWeight', 'bold');
+sgtitle(sprintf('图%d 条件间差异波 B-A 和 C-A (SSVEP已消除)', fig_num), 'fontsize', 15, 'FontWeight', 'bold');
 
 %% ========================================================================
 %% ========================= Part 3: 地形图 ===============================
@@ -663,7 +698,7 @@ subplot(144);
 topoplot(squeeze(mean(mean(data(:, 1:3, :, P3_idx), 1), 2)), EEG.chanlocs);
 title(sprintf('P3 (%d ms)', P3_peak_ms), 'fontsize', 12);
 
-sgtitle(sprintf('图%d 各ERP成分地形图', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
+sgtitle(sprintf('图%d 各ERP成分地形图 (SSVEP已消除)', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
 
 %% ---- 3.3 各条件在 N2 时间窗口内的平均地形图 ----
 N2_window_ms = 50;  % N2 前后各50ms
@@ -678,7 +713,7 @@ for c = 1:3
     topoplot(condition_data, EEG.chanlocs, 'maplimits', 'maxmin');
     title(sprintf('%s N2 (%d±%dms)', Cond_names{c}, N2_peak_ms, N2_window_ms), 'fontsize', 11);
 end
-sgtitle(sprintf('图%d 各条件 N2 地形图', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
+sgtitle(sprintf('图%d 各条件 N2 地形图 (SSVEP已消除)', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
 
 %% ---- 3.4 各条件在 P3 时间窗口内的平均地形图 ----
 P3_window_ms = 100;  % P3 前后各100ms
@@ -693,7 +728,7 @@ for c = 1:3
     topoplot(condition_data, EEG.chanlocs, 'maplimits', 'maxmin');
     title(sprintf('%s P3 (%d±%dms)', Cond_names{c}, P3_peak_ms, P3_window_ms), 'fontsize', 11);
 end
-sgtitle(sprintf('图%d 各条件 P3 地形图', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
+sgtitle(sprintf('图%d 各条件 P3 地形图 (SSVEP已消除)', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
 
 %% ---- 3.5 多条件逐时间窗地形图矩阵（时空演变图）----
 % 每行 = 一个条件，每列 = 一个时间窗口，每行独立色标
@@ -789,7 +824,7 @@ for c = 1:plot_nCond_topo
         'FontSize', 9, 'FontWeight', 'bold', 'Interpreter', 'none');
 end
 
-sgtitle(sprintf('图%d 各条件ERP地形图时空演变 (每%dms, \\pm%dms平均, 单位ms)', ...
+sgtitle(sprintf('图%d 各条件ERP地形图时空演变 (SSVEP已消除, 每%dms, \\pm%dms平均)', ...
     fig_num, topo_step_ms, topo_half_win), 'fontsize', 13, 'FontWeight', 'bold');
 
 % 保存图片
@@ -905,7 +940,7 @@ for ci = 1:nChans
     title(sprintf('%s N2 (%d±%dms)', chans_of_interest{ci}, N2_peak_ms, N2_window_ms), 'fontsize', 11);
     box off;
 end
-sgtitle(sprintf('图%d N2 平均振幅 (各电极)', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
+sgtitle(sprintf('图%d N2 平均振幅 (各电极, SSVEP已消除)', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
 
 fig_num = fig_num + 1;
 figure('Name', sprintf('图%d 多电极 P3 平均振幅', fig_num), 'NumberTitle', 'off', ...
@@ -923,7 +958,7 @@ for ci = 1:nChans
     title(sprintf('%s P3 (%d±%dms)', chans_of_interest{ci}, P3_peak_ms, P3_window_ms), 'fontsize', 11);
     box off;
 end
-sgtitle(sprintf('图%d P3 平均振幅 (各电极)', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
+sgtitle(sprintf('图%d P3 平均振幅 (各电极, SSVEP已消除)', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
 
 %% ========================================================================
 %% ============ Part 5: 单个被试波峰和潜伏期手动测量（交互式）==============
@@ -1047,20 +1082,20 @@ for ci = 1:nChans
     xlabel('ms');
     box off;
 end
-sgtitle(sprintf('图%d 逐时间点重复测量方差分析 (各电极)', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
+sgtitle(sprintf('图%d 逐时间点重复测量方差分析 (各电极, SSVEP已消除)', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
 
 %% ========================================================================
 %% ============ Part 7: 导出数据（方便后续统计软件分析）====================
 %% ========================================================================
 
-fprintf('\n====== 导出统计数据 ======\n');
+fprintf('\n====== 导出统计数据 (SSVEP已消除: correct-incorrect) ======\n');
 
 SubjNames = cell(nSubj, 1);
 for si = 1:nSubj
     [~, SubjNames{si}, ~] = fileparts(SubjFiles{si});
 end
 
-csv_header = 'Subject,A_correct,B_correct,C_correct\n';
+csv_header = 'Subject,A_CorrMinusIncorr,B_CorrMinusIncorr,C_CorrMinusIncorr\n';
 
 for ci = 1:nChans
     ch_name = chans_of_interest{ci};
@@ -1108,166 +1143,4 @@ for ci = 1:nChans
     fprintf('电极 %s 的数据已导出 (N2振幅/潜伏期, P3振幅/潜伏期)\n', ch_name);
 end
 
-%% ========================================================================
-%% ===== Part 8: SSVEP 减法 —— 有目标 - 无目标，提取目标诱发 ERP =========
-%% ========================================================================
-
-fprintf('\n====== Part 8: SSVEP 减法分析 (有目标 - 无目标) ======\n');
-
-data_diff = data(:, 1:3, :, :) - data_nt(:, 1:3, :, :);
-fprintf('data_diff 维度: %s (被试 × 条件 × 电极 × 时间点)\n', mat2str(size(data_diff)));
-
-Cond_labels_diff = {'A (目标-非目标)', 'B (目标-非目标)', 'C (目标-非目标)'};
-
-%% ---- 8.1 多电极：目标诱发ERP波形（SSVEP已消除）----
-fig_num = fig_num + 1;
-figure('Name', sprintf('图%d 目标诱发ERP (SSVEP已消除) - 多电极', fig_num), 'NumberTitle', 'off', ...
-    'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
-
-for ci = 1:nChans
-    ch = chan_indices(ci);
-    subplot(nRows, nCols, ci);
-    hold on; set(gca, 'YDir', 'reverse');
-    for c = 1:3
-        plot(EEG.times, squeeze(mean(data_diff(:, c, ch, :), 1)), ...
-            'Color', colors_correct{c}, 'LineWidth', 1.5);
-    end
-    xlim(disp_xlim);
-    line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
-    line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
-    title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
-    xlabel('ms'); ylabel('\muV');
-    if ci == 1
-        legend('A', 'B', 'C', 'Location', 'best', 'FontSize', 9);
-    end
-    box off;
-end
-sgtitle(sprintf('图%d 目标诱发ERP波形 (有目标 - 无目标, SSVEP已消除)', fig_num), 'fontsize', 15, 'FontWeight', 'bold');
-
-%% ---- 8.2 多电极：有目标 vs 无目标 对比（每个电极单独看原始与差值）----
-fig_num = fig_num + 1;
-figure('Name', sprintf('图%d 有目标 vs 无目标 vs 差值 - 多电极', fig_num), 'NumberTitle', 'off', ...
-    'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
-
-for ci = 1:nChans
-    ch = chan_indices(ci);
-    subplot(nRows, nCols, ci);
-    hold on; set(gca, 'YDir', 'reverse');
-    
-    target_avg    = squeeze(mean(mean(data(:, 1:3, ch, :), 1), 2));
-    nontarget_avg = squeeze(mean(mean(data_nt(:, 1:3, ch, :), 1), 2));
-    diff_avg      = squeeze(mean(mean(data_diff(:, 1:3, ch, :), 1), 2));
-    
-    plot(EEG.times, target_avg, '-r', 'LineWidth', 1.5);
-    plot(EEG.times, nontarget_avg, '-b', 'LineWidth', 1.5);
-    plot(EEG.times, diff_avg, '-k', 'LineWidth', 2);
-    
-    xlim(disp_xlim);
-    line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
-    line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
-    title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
-    xlabel('ms'); ylabel('\muV');
-    if ci == 1
-        legend('有目标', '无目标', '差值(目标诱发ERP)', 'Location', 'best', 'FontSize', 7);
-    end
-    box off;
-end
-sgtitle(sprintf('图%d 有目标 vs 无目标 vs 目标诱发ERP (SSVEP消除)', fig_num), 'fontsize', 15, 'FontWeight', 'bold');
-
-%% ---- 8.3 目标诱发ERP的N2和P3分析（多电极）----
-fprintf('\n====== 目标诱发ERP (SSVEP消除后) 各电极N2/P3 ======\n');
-
-for ci = 1:nChans
-    ch = chan_indices(ci);
-    ch_name = chans_of_interest{ci};
-    
-    N2_amp_diff = zeros(nSubj, 3);
-    N2_lat_diff = zeros(nSubj, 3);
-    P3_amp_diff = zeros(nSubj, 3);
-    P3_lat_diff = zeros(nSubj, 3);
-    
-    for s = 1:nSubj
-        for c = 1:3
-            wave = squeeze(data_diff(s, c, ch, :));
-            [min_val, min_pos] = min(wave(N2_win_idx));
-            N2_amp_diff(s, c) = min_val;
-            N2_lat_diff(s, c) = EEG.times(N2_win_idx(min_pos));
-            [max_val, max_pos] = max(wave(P3_win_idx));
-            P3_amp_diff(s, c) = max_val;
-            P3_lat_diff(s, c) = EEG.times(P3_win_idx(max_pos));
-        end
-    end
-    
-    fprintf('\n  [%s] 目标诱发ERP N2:\n', ch_name);
-    fprintf('  条件\t\t平均振幅(uV)\t标准差\t\t平均潜伏期(ms)\t标准差\n');
-    for c = 1:3
-        fprintf('  %s\t%.2f\t\t%.2f\t\t%.1f\t\t%.1f\n', ...
-            Cond_names{c}, mean(N2_amp_diff(:,c)), std(N2_amp_diff(:,c)), ...
-            mean(N2_lat_diff(:,c)), std(N2_lat_diff(:,c)));
-    end
-    fprintf('  [%s] 目标诱发ERP P3:\n', ch_name);
-    fprintf('  条件\t\t平均振幅(uV)\t标准差\t\t平均潜伏期(ms)\t标准差\n');
-    for c = 1:3
-        fprintf('  %s\t%.2f\t\t%.2f\t\t%.1f\t\t%.1f\n', ...
-            Cond_names{c}, mean(P3_amp_diff(:,c)), std(P3_amp_diff(:,c)), ...
-            mean(P3_lat_diff(:,c)), std(P3_lat_diff(:,c)));
-    end
-end
-
-%% ---- 8.4 目标诱发ERP 地形图 ----
-fig_num = fig_num + 1;
-figure('Name', sprintf('图%d 目标诱发ERP 地形图 (SSVEP消除)', fig_num), 'NumberTitle', 'off');
-
-subplot(141);
-topoplot(squeeze(mean(mean(data_diff(:, 1:3, :, P1_idx), 1), 2)), EEG.chanlocs);
-title(sprintf('P1 (%d ms)', P1_peak_ms), 'fontsize', 12);
-
-subplot(142);
-topoplot(squeeze(mean(mean(data_diff(:, 1:3, :, N1_idx), 1), 2)), EEG.chanlocs);
-title(sprintf('N1 (%d ms)', N1_peak_ms), 'fontsize', 12);
-
-subplot(143);
-topoplot(squeeze(mean(mean(data_diff(:, 1:3, :, N2_idx), 1), 2)), EEG.chanlocs);
-title(sprintf('N2 (%d ms)', N2_peak_ms), 'fontsize', 12);
-
-subplot(144);
-topoplot(squeeze(mean(mean(data_diff(:, 1:3, :, P3_idx), 1), 2)), EEG.chanlocs);
-title(sprintf('P3 (%d ms)', P3_peak_ms), 'fontsize', 12);
-
-sgtitle(sprintf('图%d 目标诱发ERP 地形图 (有目标-无目标)', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
-
-%% ---- 8.5 导出目标诱发ERP数据 ----
-for ci = 1:nChans
-    ch = chan_indices(ci);
-    ch_name = chans_of_interest{ci};
-    
-    % N2 平均振幅
-    fname = fullfile(file_path, sprintf('TargetERP_N2_amplitude_%s.csv', ch_name));
-    fid = fopen(fname, 'w');
-    fprintf(fid, 'Subject,A_correct,B_correct,C_correct\n');
-    for si = 1:nSubj
-        N2_mean_diff = zeros(1, 3);
-        for c = 1:3
-            N2_mean_diff(c) = mean(squeeze(data_diff(si, c, ch, N2_start_idx:N2_end_idx)));
-        end
-        fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, N2_mean_diff(1), N2_mean_diff(2), N2_mean_diff(3));
-    end
-    fclose(fid);
-    
-    % P3 平均振幅
-    fname = fullfile(file_path, sprintf('TargetERP_P3_amplitude_%s.csv', ch_name));
-    fid = fopen(fname, 'w');
-    fprintf(fid, 'Subject,A_correct,B_correct,C_correct\n');
-    for si = 1:nSubj
-        P3_mean_diff = zeros(1, 3);
-        for c = 1:3
-            P3_mean_diff(c) = mean(squeeze(data_diff(si, c, ch, P3_start_idx:P3_end_idx)));
-        end
-        fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, P3_mean_diff(1), P3_mean_diff(2), P3_mean_diff(3));
-    end
-    fclose(fid);
-    
-    fprintf('电极 %s 目标诱发ERP数据已导出\n', ch_name);
-end
-
-fprintf('\n====== 所有分析完成！ ======\n');
+fprintf('\n====== 所有分析完成！(SSVEP已通过 correct-incorrect 消除) ======\n');
