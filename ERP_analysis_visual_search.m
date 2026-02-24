@@ -1141,4 +1141,99 @@ for ci = 1:nChans
     fprintf('电极 %s 的数据已导出 (N2振幅/潜伏期, P3振幅/潜伏期)\n', ch_name);
 end
 
+%% ========================================================================
+%% ===== Part 8: 分条件 SSVEP 消除详情（correct - incorrect 逐条件展示）===
+%% ========================================================================
+
+fprintf('\n====== Part 8: 分条件 SSVEP 消除详情 ======\n');
+
+if exist('data_raw', 'var') && size(data_raw, 2) >= 6
+
+    stim_labels = {'A', 'B', 'C'};
+
+    %% ---- 8.1 各条件 SSVEP 消除过程: correct / incorrect / 差异波 ----
+    fig_num = fig_num + 1;
+    figure('Name', sprintf('图%d 各条件SSVEP消除过程 (correct vs incorrect vs 差异波)', fig_num), ...
+        'NumberTitle', 'off', 'Position', [30 30 1200 250*nChans]);
+    for ci = 1:nChans
+        ch = chan_indices(ci);
+        for c = 1:3
+            subplot(nChans, 3, (ci-1)*3 + c);
+            hold on; set(gca, 'YDir', 'reverse');
+            corr_wave  = squeeze(mean(data_raw(:, c,   ch, :), 1));
+            incorr_wave = squeeze(mean(data_raw(:, c+3, ch, :), 1));
+            diff_wave  = squeeze(mean(data(:, c, ch, :), 1));
+            plot(EEG.times, corr_wave, '-r', 'LineWidth', 1.2);
+            plot(EEG.times, incorr_wave, '--b', 'LineWidth', 1.2);
+            plot(EEG.times, diff_wave, '-k', 'LineWidth', 2.0);
+            xlim(disp_xlim);
+            line([0 0], ylim, 'Color', [.5 .5 .5], 'LineStyle', '--');
+            line(xlim, [0 0], 'Color', [.5 .5 .5], 'LineStyle', '-');
+            title(sprintf('%s - %s', chans_of_interest{ci}, stim_labels{c}), 'fontsize', 11, 'FontWeight', 'bold');
+            xlabel('ms'); ylabel('\muV');
+            if ci == 1 && c == 1
+                legend('正确(含SSVEP)', '错误(含SSVEP)', 'corr-incorr(SSVEP消除)', ...
+                    'Location', 'best', 'FontSize', 6);
+            end
+            box off;
+        end
+    end
+    sgtitle(sprintf('图%d 各条件SSVEP消除过程 (红=正确, 蓝虚=错误, 黑粗=差异波)', fig_num), ...
+        'fontsize', 14, 'FontWeight', 'bold');
+
+    %% ---- 8.2 SSVEP消除前后对比: 原始正确 vs SSVEP消除后 ----
+    fig_num = fig_num + 1;
+    figure('Name', sprintf('图%d SSVEP消除前后对比 (原始正确 vs 消除后)', fig_num), ...
+        'NumberTitle', 'off', 'Position', [50 50 1200 200*ceil(nChans/3)*1.2]);
+    for ci = 1:nChans
+        ch = chan_indices(ci);
+        subplot(nRows, nCols, ci);
+        hold on; set(gca, 'YDir', 'reverse');
+        line_styles_raw = {'-', '-', '-'};
+        line_styles_sub = {'--', '--', '--'};
+        for c = 1:3
+            raw_wave = squeeze(mean(data_raw(:, c, ch, :), 1));
+            sub_wave = squeeze(mean(data(:, c, ch, :), 1));
+            plot(EEG.times, raw_wave, line_styles_raw{c}, 'Color', colors_correct{c}, 'LineWidth', 1.2);
+            plot(EEG.times, sub_wave, line_styles_sub{c}, 'Color', colors_correct{c}, 'LineWidth', 2.0);
+        end
+        xlim(disp_xlim);
+        line([0 0], ylim, 'Color', [.5 .5 .5], 'LineStyle', '--');
+        line(xlim, [0 0], 'Color', [.5 .5 .5], 'LineStyle', '-');
+        title(chans_of_interest{ci}, 'fontsize', 13, 'FontWeight', 'bold');
+        xlabel('ms'); ylabel('\muV');
+        if ci == 1
+            legend('A原始', 'A消除后', 'B原始', 'B消除后', 'C原始', 'C消除后', ...
+                'Location', 'best', 'FontSize', 6);
+        end
+        box off;
+    end
+    sgtitle(sprintf('图%d SSVEP消除前后对比 (细实线=原始correct, 粗虚线=corr-incorr)', fig_num), ...
+        'fontsize', 14, 'FontWeight', 'bold');
+
+    %% ---- 8.3 SSVEP 消除后各成分地形图（P1/N1/N2/P3）----
+    fig_num = fig_num + 1;
+    figure('Name', sprintf('图%d SSVEP消除后各ERP成分地形图', fig_num), 'NumberTitle', 'off');
+
+    subplot(141);
+    topoplot(squeeze(mean(mean(data(:, 1:3, :, P1_idx), 1), 2)), EEG.chanlocs);
+    title(sprintf('P1 (%d ms)', P1_peak_ms), 'fontsize', 12);
+
+    subplot(142);
+    topoplot(squeeze(mean(mean(data(:, 1:3, :, N1_idx), 1), 2)), EEG.chanlocs);
+    title(sprintf('N1 (%d ms)', N1_peak_ms), 'fontsize', 12);
+
+    subplot(143);
+    topoplot(squeeze(mean(mean(data(:, 1:3, :, N2_idx), 1), 2)), EEG.chanlocs);
+    title(sprintf('N2 (%d ms)', N2_peak_ms), 'fontsize', 12);
+
+    subplot(144);
+    topoplot(squeeze(mean(mean(data(:, 1:3, :, P3_idx), 1), 2)), EEG.chanlocs);
+    title(sprintf('P3 (%d ms)', P3_peak_ms), 'fontsize', 12);
+
+    sgtitle(sprintf('图%d SSVEP消除后各ERP成分地形图 (corr-incorr)', fig_num), ...
+        'fontsize', 14, 'FontWeight', 'bold');
+
+end
+
 fprintf('\n====== 所有分析完成！(SSVEP已通过 correct-incorrect 消除) ======\n');
