@@ -1006,14 +1006,14 @@ function Y_pred = clf_eegnet(Xtr, Ytr, Xte, p)
             % 深度卷积（空间滤波）
             groupedConvolution2dLayer([nC 1], D, F1, 'Name', 'conv_depth')
             batchNormalizationLayer('Name', 'bn2')
-            eluLayer(1, 'Name', 'elu1')
+            reluLayer('Name', 'relu1')
             averagePooling2dLayer([1 4], 'Stride', [1 4], 'Name', 'pool1')
             dropoutLayer(p.eegnet_dropout, 'Name', 'drop1')
             
             % Block 2: 可分离卷积
             convolution2dLayer([1 16], F2, 'Padding', 'same', 'Name', 'conv_sep')
             batchNormalizationLayer('Name', 'bn3')
-            eluLayer(1, 'Name', 'elu2')
+            reluLayer('Name', 'relu2')
             averagePooling2dLayer([1 8], 'Stride', [1 8], 'Name', 'pool2')
             dropoutLayer(p.eegnet_dropout, 'Name', 'drop2')
             
@@ -1075,32 +1075,30 @@ function feat = extract_component_features(X3d, p, set_id)
     nTrials = size(X3d, 1);
     feat = [];
     
-    if set_id == 1 || set_id == 3
-        % N2: PO7/PO8 × [200-250ms]
-        for ci = 1:length(p.N2_cidx)
-            ch = p.N2_cidx(ci);
-            for ti = 1:nTrials
-                seg = squeeze(X3d(ti, ch, p.N2_tidx));
-                feat(ti, end+1) = mean(seg);             % 均值
-                [pk, pi] = min(seg);                      % N2 负峰
-                feat(ti, end+1) = pk;
-                feat(ti, end+1) = p.times(p.N2_tidx(pi)); % 潜伏期
+    for ti = 1:nTrials
+        fvec = [];
+        
+        if set_id == 1 || set_id == 3
+            for ci = 1:length(p.N2_cidx)
+                ch = p.N2_cidx(ci);
+                seg = squeeze(X3d(ti, ch, p.N2_tidx))';
+                seg = seg(:)';
+                [pk, pi] = min(seg);
+                fvec = [fvec, mean(seg), pk, p.times(p.N2_tidx(pi))];
             end
         end
-    end
-    
-    if set_id == 2 || set_id == 3
-        % P3: Fz/Cz × [300-350ms]
-        for ci = 1:length(p.P3_cidx)
-            ch = p.P3_cidx(ci);
-            for ti = 1:nTrials
-                seg = squeeze(X3d(ti, ch, p.P3_tidx));
-                feat(ti, end+1) = mean(seg);             % 均值
-                [pk, pi] = max(seg);                      % P3 正峰
-                feat(ti, end+1) = pk;
-                feat(ti, end+1) = p.times(p.P3_tidx(pi));
+        
+        if set_id == 2 || set_id == 3
+            for ci = 1:length(p.P3_cidx)
+                ch = p.P3_cidx(ci);
+                seg = squeeze(X3d(ti, ch, p.P3_tidx))';
+                seg = seg(:)';
+                [pk, pi] = max(seg);
+                fvec = [fvec, mean(seg), pk, p.times(p.P3_tidx(pi))];
             end
         end
+        
+        feat(ti, :) = fvec;
     end
 end
 
@@ -1116,6 +1114,7 @@ function feat = extract_wavelet_features(X3d, p)
         for ci = 1:length(all_cidx)
             ch = all_cidx(ci);
             sig = squeeze(X3d(ti, ch, all_tidx));
+            sig = sig(:)';
             
             % 小波分解 (db4, 3层)
             try
@@ -1128,9 +1127,11 @@ function feat = extract_wavelet_features(X3d, p)
                 a = appcoef(C, L, 'db4', 3);
                 fvec = [fvec, mean(a), std(a), sum(a.^2)/length(a)];
             catch
-                % 信号太短时用原始统计量
-                fvec = [fvec, mean(sig), std(sig), max(sig), min(sig), ...
-                         mean(sig.^2), skewness(sig)];
+                % 信号太短时用原始统计量（12 维以匹配正常路径）
+                fvec = [fvec, mean(sig), std(sig), mean(sig.^2), ...
+                         max(sig), min(sig), mean(sig.^2), ...
+                         std(sig), mean(sig), var(sig), ...
+                         max(sig), min(sig), skewness(sig)];
             end
         end
         feat(ti, :) = fvec;
