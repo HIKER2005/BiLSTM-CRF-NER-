@@ -691,20 +691,25 @@ function Y_pred = hdca_binary(Xtr, Ytr, Xte, srate, win_ms, step_ms)
     classes = unique(Ytr);
     idx1 = (Ytr==classes(1)); idx0 = (Ytr==classes(2));
     
+    % 自适应正则化：lambda 与通道数成正比
+    lambda = max(1e-3, nC * 1e-4);
+    
     proj_tr = zeros(size(Xtr,1), nW);
     proj_te = zeros(size(Xte,1), nW);
     
+    wstate = warning('off', 'MATLAB:nearlySingularMatrix');
     for wi = 1:nW
         tidx = starts(wi):min(starts(wi)+ws-1, nT);
         X1 = squeeze(mean(Xtr(idx1,:,tidx),3));
         X0 = squeeze(mean(Xtr(idx0,:,tidx),3));
         if size(X1,1)==1, X1=X1(:)'; end
         if size(X0,1)==1, X0=X0(:)'; end
-        Sw = cov(X1)+cov(X0)+eye(nC)*1e-6;
+        Sw = cov(X1)+cov(X0)+eye(nC)*lambda;
         w = Sw\(mean(X1,1)'-mean(X0,1)');
         proj_tr(:,wi) = squeeze(mean(Xtr(:,:,tidx),3))*w;
         proj_te(:,wi) = squeeze(mean(Xte(:,:,tidx),3))*w;
     end
+    warning(wstate);
     
     mdl = fitcdiscr(proj_tr, Ytr, 'DiscrimType', 'linear');
     Y_pred = predict(mdl, proj_te);
@@ -718,9 +723,12 @@ function Y_pred = hdca_multiclass(Xtr, Ytr, Xte, srate, win_ms, step_ms)
     nW = length(starts);
     classes = unique(Ytr); nCls = length(classes);
     
+    lambda = max(1e-3, nC * 1e-4);
+    
     proj_tr = zeros(size(Xtr,1), nW*nCls);
     proj_te = zeros(size(Xte,1), nW*nCls);
     
+    wstate = warning('off', 'MATLAB:nearlySingularMatrix');
     for ci = 1:nCls
         Ybin = double(Ytr==classes(ci));
         for wi = 1:nW
@@ -729,7 +737,7 @@ function Y_pred = hdca_multiclass(Xtr, Ytr, Xte, srate, win_ms, step_ms)
             X0 = squeeze(mean(Xtr(Ybin==0,:,tidx),3));
             if size(X1,1)==1, X1=X1(:)'; end
             if size(X0,1)==1, X0=X0(:)'; end
-            Sw = cov(X1)+cov(X0)+eye(nC)*1e-6;
+            Sw = cov(X1)+cov(X0)+eye(nC)*lambda;
             w = Sw\(mean(X1,1)'-mean(X0,1)');
             col = (ci-1)*nW+wi;
             Xtr_w = squeeze(mean(Xtr(:,:,tidx),3));
@@ -740,6 +748,7 @@ function Y_pred = hdca_multiclass(Xtr, Ytr, Xte, srate, win_ms, step_ms)
             proj_te(:,col) = Xte_w*w;
         end
     end
+    warning(wstate);
     
     mdl = fitcdiscr(proj_tr, Ytr, 'DiscrimType', 'linear');
     Y_pred = predict(mdl, proj_te);
