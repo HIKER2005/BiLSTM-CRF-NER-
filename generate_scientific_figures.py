@@ -5,7 +5,9 @@ Hypothesis: Stimulus A optimizes visual search performance more than B and C
 """
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')
+import sys
+if sys.platform != 'win32':
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy import stats
 from sklearn.model_selection import LeaveOneGroupOut
@@ -51,6 +53,11 @@ plt.rcParams.update({
 COLORS = {'A': '#E64B35', 'B': '#4DBBD5', 'C': '#00A087'}
 COLOR_LIST = [COLORS['A'], COLORS['B'], COLORS['C']]
 COND_LABELS = ['A', 'B', 'C']
+
+import os
+SAVE_DIR = os.path.dirname(os.path.abspath(__file__))  # 保存到脚本所在目录
+def savepath(name):
+    return os.path.join(SAVE_DIR, name)
 
 # ============================================================
 # Data
@@ -189,8 +196,8 @@ def fig1():
                edgecolor='gray', fancybox=True)
 
     fig.suptitle('图1  行为学结果', fontsize=16, fontweight='bold', y=1.01)
-    fig.savefig('/workspace/Figure1_Behavioral_Results.png')
-    fig.savefig('/workspace/Figure1_Behavioral_Results.pdf')
+    fig.savefig(savepath('Figure1_Behavioral_Results.png'))
+    fig.savefig(savepath('Figure1_Behavioral_Results.pdf'))
     plt.close(fig)
     print('Figure 1 saved.')
 
@@ -263,8 +270,8 @@ def fig2():
                edgecolor='gray', fancybox=True)
 
     fig.suptitle('图2  ERP ROI 成分分析', fontsize=16, fontweight='bold', y=1.03)
-    fig.savefig('/workspace/Figure2_ERP_ROI_Results.png')
-    fig.savefig('/workspace/Figure2_ERP_ROI_Results.pdf')
+    fig.savefig(savepath('Figure2_ERP_ROI_Results.png'))
+    fig.savefig(savepath('Figure2_ERP_ROI_Results.pdf'))
     plt.close(fig)
     print('Figure 2 saved.')
 
@@ -314,8 +321,8 @@ def fig3():
                edgecolor='gray', fancybox=True)
 
     fig.suptitle('图3  行为学与ERP综合分析', fontsize=18, fontweight='bold', y=0.98)
-    fig.savefig('/workspace/Figure3_Comprehensive_Summary.png')
-    fig.savefig('/workspace/Figure3_Comprehensive_Summary.pdf')
+    fig.savefig(savepath('Figure3_Comprehensive_Summary.png'))
+    fig.savefig(savepath('Figure3_Comprehensive_Summary.pdf'))
     plt.close(fig)
     print('Figure 3 saved.')
 
@@ -406,8 +413,8 @@ def fig4():
               frameon=True, edgecolor='gray', fancybox=True)
     ax.set_title('图4  多维度性能概况', fontsize=16, fontweight='bold', pad=25)
 
-    fig.savefig('/workspace/Figure4_Radar_Chart.png')
-    fig.savefig('/workspace/Figure4_Radar_Chart.pdf')
+    fig.savefig(savepath('Figure4_Radar_Chart.png'))
+    fig.savefig(savepath('Figure4_Radar_Chart.pdf'))
     plt.close(fig)
     print('Figure 4 saved.')
 
@@ -493,8 +500,8 @@ def fig5():
     ax.invert_yaxis()
     ax.set_title('图5  9种算法分类精度对比 (LOSO-CV)', fontsize=16, fontweight='bold', pad=12)
 
-    fig.savefig('/workspace/Figure5_ML_Classification.png')
-    fig.savefig('/workspace/Figure5_ML_Classification.pdf')
+    fig.savefig(savepath('Figure5_ML_Classification.png'))
+    fig.savefig(savepath('Figure5_ML_Classification.pdf'))
     plt.close(fig)
     print('Figure 5 saved.')
 
@@ -522,8 +529,8 @@ def fig5():
     ax2.spines['right'].set_visible(False)
     ax2.set_title('图6  Random Forest 特征重要性', fontsize=16, fontweight='bold', pad=12)
 
-    fig2.savefig('/workspace/Figure6_Feature_Importance.png')
-    fig2.savefig('/workspace/Figure6_Feature_Importance.pdf')
+    fig2.savefig(savepath('Figure6_Feature_Importance.png'))
+    fig2.savefig(savepath('Figure6_Feature_Importance.pdf'))
     plt.close(fig2)
     print('Figure 6 saved.')
 
