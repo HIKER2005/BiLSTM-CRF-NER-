@@ -706,10 +706,15 @@ function Y_pred = clf_hdca(Xtr, Ytr, Xte, p)
     Y_pred = predict(mdl, proj_te);
 end
 
-%% ---- 2. SVM: 支持向量机（ERP 特征）----
+%% ---- 2. SVM: 支持向量机（ERP 特征 + 时间窗采样点）----
 function Y_pred = clf_svm(Xtr, Ytr, Xte, p)
-    Ftr = extract_component_features(Xtr, p, 3);
-    Fte = extract_component_features(Xte, p, 3);
+    % 同时使用统计特征和时间窗内全部采样点
+    Ftr_stat = extract_component_features(Xtr, p, 3);
+    Fte_stat = extract_component_features(Xte, p, 3);
+    Ftr_raw = extract_raw_window_features(Xtr, p);
+    Fte_raw = extract_raw_window_features(Xte, p);
+    Ftr = [Ftr_stat, Ftr_raw];
+    Fte = [Fte_stat, Fte_raw];
     [Ftr, mu, sg] = zscore(Ftr); sg(sg==0)=1;
     Fte = (Fte - mu) ./ sg;
     mdl = fitcecoc(Ftr, Ytr, 'Learners', templateSVM('KernelFunction','rbf'));
@@ -983,28 +988,25 @@ function Y_pred = clf_eegnet(Xtr, Ytr, Xte, p)
     nCls = length(classes);
     
     F1 = p.eegnet_F1; D = p.eegnet_D; F2 = p.eegnet_F2;
-    kernLength = min(nT, max(32, round(p.srate * 0.25)));  % ~250ms
+    kernLength = min(nT, max(32, round(p.srate * 0.25)));
     
-    % 重排为 4D: nC × nT × 1 × nTrials
-    Xtr_4d = permute(Xtr, [2 3 4 1]);                 % nC × nT × 1 × nTr
+    Xtr_4d = permute(Xtr, [2 3 4 1]);
     Xtr_4d = reshape(Xtr_4d, nC, nT, 1, nTr);
     Xte_4d = permute(Xte, [2 3 4 1]);
     Xte_4d = reshape(Xte_4d, nC, nT, 1, nTe);
     
-    % 标签 → categorical
     Ytr_cat = categorical(Ytr);
     
     try
-        % EEGNet 架构
+        % EEGNet 简化架构（兼容 MATLAB R2022a+）
+        % 用标准 convolution2dLayer 替代 groupedConvolution2dLayer
         layers = [
             imageInputLayer([nC nT 1], 'Normalization', 'none', 'Name', 'input')
             
-            % Block 1: 时间卷积
+            % Block 1: 时间卷积 → 空间卷积
             convolution2dLayer([1 kernLength], F1, 'Padding', 'same', 'Name', 'conv_temporal')
             batchNormalizationLayer('Name', 'bn1')
-            
-            % 深度卷积（空间滤波）
-            groupedConvolution2dLayer([nC 1], D, F1, 'Name', 'conv_depth')
+            convolution2dLayer([nC 1], F1*D, 'Name', 'conv_spatial')
             batchNormalizationLayer('Name', 'bn2')
             reluLayer('Name', 'relu1')
             averagePooling2dLayer([1 4], 'Stride', [1 4], 'Name', 'pool1')
@@ -1017,7 +1019,6 @@ function Y_pred = clf_eegnet(Xtr, Ytr, Xte, p)
             averagePooling2dLayer([1 8], 'Stride', [1 8], 'Name', 'pool2')
             dropoutLayer(p.eegnet_dropout, 'Name', 'drop2')
             
-            % 分类器
             fullyConnectedLayer(nCls, 'Name', 'fc')
             softmaxLayer('Name', 'softmax')
             classificationLayer('Name', 'output')
@@ -1025,18 +1026,16 @@ function Y_pred = clf_eegnet(Xtr, Ytr, Xte, p)
         
         opts = trainingOptions('adam', ...
             'MaxEpochs', p.eegnet_epochs, ...
-            'MiniBatchSize', min(32, floor(nTr/2)), ...
+            'MiniBatchSize', min(32, max(8, floor(nTr/4))), ...
             'InitialLearnRate', 1e-3, ...
             'Shuffle', 'every-epoch', ...
             'Verbose', false, ...
-            'ValidationFrequency', 50, ...
-            'L2Regularization', 1e-4);
+            'L2Regularization', 1e-3);
         
         net = trainNetwork(Xtr_4d, Ytr_cat, layers, opts);
         Ypred_cat = classify(net, Xte_4d);
         Y_pred = double(Ypred_cat);
     catch ME
-        % Deep Learning Toolbox 不可用时回退到 BP 神经网络
         warning('EEGNet 构建失败 (%s)，回退到 BP 神经网络', ME.message);
         Y_pred = clf_bpnn_fallback(Xtr, Ytr, Xte, p);
     end
@@ -1098,6 +1097,26 @@ function feat = extract_component_features(X3d, p, set_id)
             end
         end
         
+        feat(ti, :) = fvec;
+    end
+end
+
+function feat = extract_raw_window_features(X3d, p)
+%EXTRACT_RAW_WINDOW_FEATURES 提取 N2/P3 时间窗内全部采样点作为特征
+    nTrials = size(X3d, 1);
+    feat = [];
+    for ti = 1:nTrials
+        fvec = [];
+        for ci = 1:length(p.N2_cidx)
+            ch = p.N2_cidx(ci);
+            seg = squeeze(X3d(ti, ch, p.N2_tidx));
+            fvec = [fvec, seg(:)'];
+        end
+        for ci = 1:length(p.P3_cidx)
+            ch = p.P3_cidx(ci);
+            seg = squeeze(X3d(ti, ch, p.P3_tidx));
+            fvec = [fvec, seg(:)'];
+        end
         feat(ti, :) = fvec;
     end
 end
