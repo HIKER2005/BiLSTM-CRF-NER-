@@ -35,7 +35,8 @@ eeglab;
 
 %% ========================= 参数设置（需要修改的部分）=========================
 file_path = 'D:\实验一数据\闪烁光实验一\预处理结束\'; %%% 数据文件所在路径，修改为你的实际路径
-save_figure_dir = 'C:\Users\wangw\Desktop\ERP-视觉搜索阶段-v6\v6_中性电极成分';
+save_figure_dir = 'C:\Users\wangw\Desktop\ERP-视觉搜索阶段-v6\v6_3_8';
+save_table_dir  = 'C:\Users\wangw\Desktop\ERP-视觉搜索阶段-v6';  %%% 统计表格输出目录
 
 %%% =================== 被试文件定义 ===================
 %%% 方式1（推荐）：自动读取目录下所有 .set 文件作为被试
@@ -119,6 +120,12 @@ end
 chans_of_interest = {'POz', 'Oz', 'FCz', 'Fz', 'Fpz', 'Pz', 'Cz',  ...
                     };
 chan_indices = [];
+
+% ====== ROI 电极定义（用于 Part 9 统计分析）======
+% N2 ROI: 额-中央中线区，N2 成分最大且三条件分化最清晰的区域
+N2_roi_chans = {'FCz', 'Fz', 'Cz'};
+% P3 ROI: 顶-中央区，P3b 成分最大的区域
+P3_roi_chans = {'Pz', 'Cz'};
 
 % 兼容旧变量名
 chan_of_interest = chans_of_interest{1};
@@ -575,7 +582,7 @@ sgtitle(sprintf('图%d 差异波 (B-A 和 C-A)', fig_num), 'fontsize', 15, 'Font
 P1_peak_ms = 100;
 N1_peak_ms = 170;
 N2_peak_ms = 250;
-P3_peak_ms = 400;
+P3_peak_ms = 450;   % 调整为450，使P3窗口为350-550ms，避免N2残余污染
 
 P1_idx = find(EEG.times >= P1_peak_ms, 1, 'first');
 N1_idx = find(EEG.times >= N1_peak_ms, 1, 'first');
@@ -1133,6 +1140,590 @@ for ci = 1:nChans
 
     fprintf('电极 %s 目标诱发ERP数据已导出\n', ch_name);
 end
+
+%% ========================================================================
+%% ===== Part 9: ROI 统计分析与表格导出 ===================================
+%% ========================================================================
+%  根据时空演变图（图7）和各电极柱状图（图8/9）确定的最优分析方案：
+%
+%  ┌──────────┬────────────────┬──────────────────────────┐
+%  │ 决策项    │ 推荐选择        │ 依据                      │
+%  ├──────────┼────────────────┼──────────────────────────┤
+%  │ N2 时间窗 │ 200-300ms      │ 图7中三条件分化最大的时段    │
+%  │ P3 时间窗 │ 350-550ms      │ 图7中后部正性分化最清晰      │
+%  │ N2 电极   │ FCz+Fz+Cz 平均 │ 图5/图8三电极一致梯度效应    │
+%  │ P3 电极   │ Pz+Cz 平均     │ 图6/图9中Pz效应最大          │
+%  │ 核心指标  │ 平均振幅        │ 最稳健，小样本统计力最优     │
+%  │ 补充指标  │ 峰值潜伏期      │ 图7提示A的时间进程更快       │
+%  │ 统计方法  │ RM-ANOVA+事后   │ 最直接检验 A vs B vs C      │
+%  └──────────┴────────────────┴──────────────────────────┘
+
+fprintf('\n========================================================================\n');
+fprintf('  Part 9: ROI 统计分析与表格导出\n');
+fprintf('========================================================================\n');
+
+% ---- 9.0 创建输出目录 ----
+if ~exist(save_table_dir, 'dir')
+    mkdir(save_table_dir);
+end
+
+% ---- 9.1 查找 ROI 电极索引 ----
+all_labels = {EEG.chanlocs.labels};
+
+N2_roi_idx = zeros(1, length(N2_roi_chans));
+for ri = 1:length(N2_roi_chans)
+    found = find(strcmpi(all_labels, N2_roi_chans{ri}));
+    if ~isempty(found)
+        N2_roi_idx(ri) = found(1);
+    else
+        warning('N2 ROI 电极 %s 未找到！', N2_roi_chans{ri});
+    end
+end
+N2_roi_valid = N2_roi_idx > 0;
+N2_roi_chans_used = N2_roi_chans(N2_roi_valid);
+N2_roi_idx = N2_roi_idx(N2_roi_valid);
+
+P3_roi_idx = zeros(1, length(P3_roi_chans));
+for ri = 1:length(P3_roi_chans)
+    found = find(strcmpi(all_labels, P3_roi_chans{ri}));
+    if ~isempty(found)
+        P3_roi_idx(ri) = found(1);
+    else
+        warning('P3 ROI 电极 %s 未找到！', P3_roi_chans{ri});
+    end
+end
+P3_roi_valid = P3_roi_idx > 0;
+P3_roi_chans_used = P3_roi_chans(P3_roi_valid);
+P3_roi_idx = P3_roi_idx(P3_roi_valid);
+
+fprintf('N2 ROI 电极: %s (共%d个)\n', strjoin(N2_roi_chans_used, ' + '), length(N2_roi_idx));
+fprintf('P3 ROI 电极: %s (共%d个)\n', strjoin(P3_roi_chans_used, ' + '), length(P3_roi_idx));
+
+% ---- 9.2 定义统计分析用的时间窗口 ----
+N2_stat_window = [200, 300];   % N2: 200-300ms (250±50ms)
+P3_stat_window = [350, 550];   % P3: 350-550ms (450±100ms)
+
+N2_stat_idx = find(EEG.times >= N2_stat_window(1) & EEG.times <= N2_stat_window(2));
+P3_stat_idx = find(EEG.times >= P3_stat_window(1) & EEG.times <= P3_stat_window(2));
+
+fprintf('N2 时间窗: %d-%dms (%d个采样点)\n', N2_stat_window(1), N2_stat_window(2), length(N2_stat_idx));
+fprintf('P3 时间窗: %d-%dms (%d个采样点)\n', P3_stat_window(1), P3_stat_window(2), length(P3_stat_idx));
+
+% ---- 9.3 提取 ROI 平均振幅（每个被试 × 每个条件）----
+% N2 ROI 平均振幅: 先对 ROI 电极取平均，再在时间窗口内取平均
+N2_roi_mean_amp = zeros(nSubj, 3);  % 被试 × 3个正确条件
+P3_roi_mean_amp = zeros(nSubj, 3);
+
+for si = 1:nSubj
+    for c = 1:3
+        % N2: ROI 电极平均 → 时间窗口平均
+        roi_data_N2 = squeeze(mean(data(si, c, N2_roi_idx, :), 3));  % 电极平均
+        N2_roi_mean_amp(si, c) = mean(roi_data_N2(N2_stat_idx));     % 时间窗口平均
+
+        % P3: ROI 电极平均 → 时间窗口平均
+        roi_data_P3 = squeeze(mean(data(si, c, P3_roi_idx, :), 3));
+        P3_roi_mean_amp(si, c) = mean(roi_data_P3(P3_stat_idx));
+    end
+end
+
+% ---- 9.4 提取 ROI 峰值振幅和潜伏期 ----
+N2_roi_peak_amp = zeros(nSubj, 3);
+N2_roi_peak_lat = zeros(nSubj, 3);
+P3_roi_peak_amp = zeros(nSubj, 3);
+P3_roi_peak_lat = zeros(nSubj, 3);
+
+N2_peak_search_idx = find(EEG.times >= 150 & EEG.times <= 350);
+P3_peak_search_idx = find(EEG.times >= 250 & EEG.times <= 600);
+
+for si = 1:nSubj
+    for c = 1:3
+        % N2 峰值: ROI 平均波形中的最小值（负波峰）
+        roi_wave_N2 = squeeze(mean(data(si, c, N2_roi_idx, :), 3));
+        [min_val, min_pos] = min(roi_wave_N2(N2_peak_search_idx));
+        N2_roi_peak_amp(si, c) = min_val;
+        N2_roi_peak_lat(si, c) = EEG.times(N2_peak_search_idx(min_pos));
+
+        % P3 峰值: ROI 平均波形中的最大值（正波峰）
+        roi_wave_P3 = squeeze(mean(data(si, c, P3_roi_idx, :), 3));
+        [max_val, max_pos] = max(roi_wave_P3(P3_peak_search_idx));
+        P3_roi_peak_amp(si, c) = max_val;
+        P3_roi_peak_lat(si, c) = EEG.times(P3_peak_search_idx(max_pos));
+    end
+end
+
+% ---- 9.5 描述统计 ----
+fprintf('\n====== N2 ROI 平均振幅 (%s, %d-%dms) ======\n', ...
+    strjoin(N2_roi_chans_used, '+'), N2_stat_window(1), N2_stat_window(2));
+fprintf('条件\t\tMean(μV)\tSD\t\tSE\n');
+for c = 1:3
+    m = mean(N2_roi_mean_amp(:,c));
+    s = std(N2_roi_mean_amp(:,c));
+    se = s / sqrt(nSubj);
+    fprintf('%s\t%.3f\t\t%.3f\t\t%.3f\n', Cond_names{c}, m, s, se);
+end
+
+fprintf('\n====== P3 ROI 平均振幅 (%s, %d-%dms) ======\n', ...
+    strjoin(P3_roi_chans_used, '+'), P3_stat_window(1), P3_stat_window(2));
+fprintf('条件\t\tMean(μV)\tSD\t\tSE\n');
+for c = 1:3
+    m = mean(P3_roi_mean_amp(:,c));
+    s = std(P3_roi_mean_amp(:,c));
+    se = s / sqrt(nSubj);
+    fprintf('%s\t%.3f\t\t%.3f\t\t%.3f\n', Cond_names{c}, m, s, se);
+end
+
+fprintf('\n====== N2 ROI 峰值潜伏期 (%s) ======\n', strjoin(N2_roi_chans_used, '+'));
+fprintf('条件\t\tMean(ms)\tSD\n');
+for c = 1:3
+    fprintf('%s\t%.1f\t\t%.1f\n', Cond_names{c}, mean(N2_roi_peak_lat(:,c)), std(N2_roi_peak_lat(:,c)));
+end
+
+fprintf('\n====== P3 ROI 峰值潜伏期 (%s) ======\n', strjoin(P3_roi_chans_used, '+'));
+fprintf('条件\t\tMean(ms)\tSD\n');
+for c = 1:3
+    fprintf('%s\t%.1f\t\t%.1f\n', Cond_names{c}, mean(P3_roi_peak_lat(:,c)), std(P3_roi_peak_lat(:,c)));
+end
+
+% ---- 9.6 单因素重复测量方差分析 (RM-ANOVA) ----
+fprintf('\n====== 单因素重复测量 ANOVA ======\n');
+
+% 辅助函数：计算 partial eta-squared
+% partial_eta2 = SS_effect / (SS_effect + SS_error)
+% 对于 RM-ANOVA: 从 anova_rm 的输出表中提取
+
+anova_results = struct();
+
+% --- N2 平均振幅 ANOVA ---
+fprintf('\n--- N2 ROI 平均振幅 ANOVA ---\n');
+try
+    [p_n2, tbl_n2] = anova_rm(N2_roi_mean_amp, 'off');
+    F_n2 = tbl_n2{2, 5};
+    p_val_n2 = p_n2(1);
+    df1_n2 = tbl_n2{2, 3};
+    df2_n2 = tbl_n2{3, 3};
+    SS_cond_n2 = tbl_n2{2, 2};
+    SS_err_n2  = tbl_n2{3, 2};
+    eta2_n2 = SS_cond_n2 / (SS_cond_n2 + SS_err_n2);
+    fprintf('  F(%d,%d) = %.3f, p = %.4f, partial η² = %.3f\n', df1_n2, df2_n2, F_n2, p_val_n2, eta2_n2);
+    anova_results.N2_F = F_n2;
+    anova_results.N2_p = p_val_n2;
+    anova_results.N2_df1 = df1_n2;
+    anova_results.N2_df2 = df2_n2;
+    anova_results.N2_eta2 = eta2_n2;
+catch ME
+    warning('N2 ANOVA 失败: %s', ME.message);
+    anova_results.N2_F = NaN; anova_results.N2_p = NaN;
+    anova_results.N2_df1 = NaN; anova_results.N2_df2 = NaN;
+    anova_results.N2_eta2 = NaN;
+end
+
+% --- P3 平均振幅 ANOVA ---
+fprintf('\n--- P3 ROI 平均振幅 ANOVA ---\n');
+try
+    [p_p3, tbl_p3] = anova_rm(P3_roi_mean_amp, 'off');
+    F_p3 = tbl_p3{2, 5};
+    p_val_p3 = p_p3(1);
+    df1_p3 = tbl_p3{2, 3};
+    df2_p3 = tbl_p3{3, 3};
+    SS_cond_p3 = tbl_p3{2, 2};
+    SS_err_p3  = tbl_p3{3, 2};
+    eta2_p3 = SS_cond_p3 / (SS_cond_p3 + SS_err_p3);
+    fprintf('  F(%d,%d) = %.3f, p = %.4f, partial η² = %.3f\n', df1_p3, df2_p3, F_p3, p_val_p3, eta2_p3);
+    anova_results.P3_F = F_p3;
+    anova_results.P3_p = p_val_p3;
+    anova_results.P3_df1 = df1_p3;
+    anova_results.P3_df2 = df2_p3;
+    anova_results.P3_eta2 = eta2_p3;
+catch ME
+    warning('P3 ANOVA 失败: %s', ME.message);
+    anova_results.P3_F = NaN; anova_results.P3_p = NaN;
+    anova_results.P3_df1 = NaN; anova_results.P3_df2 = NaN;
+    anova_results.P3_eta2 = NaN;
+end
+
+% --- N2 峰值潜伏期 ANOVA ---
+fprintf('\n--- N2 ROI 峰值潜伏期 ANOVA ---\n');
+try
+    [p_n2lat, tbl_n2lat] = anova_rm(N2_roi_peak_lat, 'off');
+    F_n2lat = tbl_n2lat{2, 5};
+    p_val_n2lat = p_n2lat(1);
+    df1_n2lat = tbl_n2lat{2, 3};
+    df2_n2lat = tbl_n2lat{3, 3};
+    SS_cond_n2lat = tbl_n2lat{2, 2};
+    SS_err_n2lat  = tbl_n2lat{3, 2};
+    eta2_n2lat = SS_cond_n2lat / (SS_cond_n2lat + SS_err_n2lat);
+    fprintf('  F(%d,%d) = %.3f, p = %.4f, partial η² = %.3f\n', df1_n2lat, df2_n2lat, F_n2lat, p_val_n2lat, eta2_n2lat);
+    anova_results.N2lat_F = F_n2lat; anova_results.N2lat_p = p_val_n2lat;
+    anova_results.N2lat_df1 = df1_n2lat; anova_results.N2lat_df2 = df2_n2lat;
+    anova_results.N2lat_eta2 = eta2_n2lat;
+catch ME
+    warning('N2 潜伏期 ANOVA 失败: %s', ME.message);
+    anova_results.N2lat_F = NaN; anova_results.N2lat_p = NaN;
+    anova_results.N2lat_df1 = NaN; anova_results.N2lat_df2 = NaN;
+    anova_results.N2lat_eta2 = NaN;
+end
+
+% --- P3 峰值潜伏期 ANOVA ---
+fprintf('\n--- P3 ROI 峰值潜伏期 ANOVA ---\n');
+try
+    [p_p3lat, tbl_p3lat] = anova_rm(P3_roi_peak_lat, 'off');
+    F_p3lat = tbl_p3lat{2, 5};
+    p_val_p3lat = p_p3lat(1);
+    df1_p3lat = tbl_p3lat{2, 3};
+    df2_p3lat = tbl_p3lat{3, 3};
+    SS_cond_p3lat = tbl_p3lat{2, 2};
+    SS_err_p3lat  = tbl_p3lat{3, 2};
+    eta2_p3lat = SS_cond_p3lat / (SS_cond_p3lat + SS_err_p3lat);
+    fprintf('  F(%d,%d) = %.3f, p = %.4f, partial η² = %.3f\n', df1_p3lat, df2_p3lat, F_p3lat, p_val_p3lat, eta2_p3lat);
+    anova_results.P3lat_F = F_p3lat; anova_results.P3lat_p = p_val_p3lat;
+    anova_results.P3lat_df1 = df1_p3lat; anova_results.P3lat_df2 = df2_p3lat;
+    anova_results.P3lat_eta2 = eta2_p3lat;
+catch ME
+    warning('P3 潜伏期 ANOVA 失败: %s', ME.message);
+    anova_results.P3lat_F = NaN; anova_results.P3lat_p = NaN;
+    anova_results.P3lat_df1 = NaN; anova_results.P3lat_df2 = NaN;
+    anova_results.P3lat_eta2 = NaN;
+end
+
+% ---- 9.7 事后配对比较 (Bonferroni 校正) ----
+fprintf('\n====== 事后配对比较 (Bonferroni 校正, α=0.05/3=0.0167) ======\n');
+
+pair_labels = {'A vs B', 'A vs C', 'B vs C'};
+pair_idx = [1 2; 1 3; 2 3];
+n_comparisons = 3;
+bonferroni_alpha = 0.05 / n_comparisons;
+
+posthoc = struct();
+measures = {'N2_mean_amp', 'P3_mean_amp', 'N2_peak_lat', 'P3_peak_lat'};
+measure_data = {N2_roi_mean_amp, P3_roi_mean_amp, N2_roi_peak_lat, P3_roi_peak_lat};
+measure_names = {'N2平均振幅', 'P3平均振幅', 'N2峰值潜伏期', 'P3峰值潜伏期'};
+
+for mi = 1:length(measures)
+    mdata = measure_data{mi};
+    fprintf('\n--- %s 事后比较 ---\n', measure_names{mi});
+    fprintf('比较\t\tt值\t\tdf\tp(未校正)\tp(Bonferroni)\tCohen''s d\t显著性\n');
+
+    for pi = 1:n_comparisons
+        c1 = pair_idx(pi, 1);
+        c2 = pair_idx(pi, 2);
+        diff_vals = mdata(:, c1) - mdata(:, c2);
+
+        [~, p_raw, ~, stats] = ttest(mdata(:, c1), mdata(:, c2));
+        t_val = stats.tstat;
+        df_val = stats.df;
+        p_bonf = min(p_raw * n_comparisons, 1);  % Bonferroni 校正
+
+        % Cohen's d (配对样本)
+        d_val = mean(diff_vals) / std(diff_vals);
+
+        if p_bonf < 0.001
+            sig_str = '***';
+        elseif p_bonf < 0.01
+            sig_str = '**';
+        elseif p_bonf < 0.05
+            sig_str = '*';
+        else
+            sig_str = 'n.s.';
+        end
+
+        fprintf('%s\t\t%.3f\t\t%d\t%.4f\t\t%.4f\t\t%.3f\t\t%s\n', ...
+            pair_labels{pi}, t_val, df_val, p_raw, p_bonf, d_val, sig_str);
+
+        posthoc.(measures{mi}).t(pi) = t_val;
+        posthoc.(measures{mi}).df(pi) = df_val;
+        posthoc.(measures{mi}).p_raw(pi) = p_raw;
+        posthoc.(measures{mi}).p_bonf(pi) = p_bonf;
+        posthoc.(measures{mi}).d(pi) = d_val;
+        posthoc.(measures{mi}).sig{pi} = sig_str;
+    end
+end
+
+% ---- 9.8 导出综合统计结果表格 ----
+fprintf('\n====== 导出统计结果表格 ======\n');
+
+% === 表1: 分析方案总结 ===
+fname = fullfile(save_table_dir, 'Table1_分析方案总结.csv');
+fid = fopen(fname, 'w', 'n', 'UTF-8');
+fprintf(fid, '\xEF\xBB\xBF');  % UTF-8 BOM
+fprintf(fid, '决策项,推荐选择,依据\n');
+fprintf(fid, 'N2时间窗,%d-%dms,图7中三条件分化最大的时段\n', N2_stat_window(1), N2_stat_window(2));
+fprintf(fid, 'P3时间窗,%d-%dms,图7中后部正性分化最清晰且避免N2残余污染\n', P3_stat_window(1), P3_stat_window(2));
+fprintf(fid, 'N2电极,%s平均,图5和图8均显示这些电极有一致的梯度效应\n', strjoin(N2_roi_chans_used, '+'));
+fprintf(fid, 'P3电极,%s平均,图6和图9中Pz效应最大Cz作为补充\n', strjoin(P3_roi_chans_used, '+'));
+fprintf(fid, '核心指标,平均振幅,最稳健且小样本下统计力最优\n');
+fprintf(fid, '补充指标,峰值潜伏期,图7提示A的时间进程更快\n');
+fprintf(fid, '统计方法,单因素RM-ANOVA+Bonferroni事后比较,最直接检验A vs B vs C\n');
+fclose(fid);
+fprintf('已导出: %s\n', fname);
+
+% === 表2: 描述统计 ===
+fname = fullfile(save_table_dir, 'Table2_描述统计.csv');
+fid = fopen(fname, 'w', 'n', 'UTF-8');
+fprintf(fid, '\xEF\xBB\xBF');
+fprintf(fid, '指标,ROI电极,时间窗(ms),条件,N,Mean,SD,SE\n');
+
+all_stat_measures = {
+    'N2平均振幅(μV)', strjoin(N2_roi_chans_used,'+'), sprintf('%d-%d',N2_stat_window), N2_roi_mean_amp;
+    'P3平均振幅(μV)', strjoin(P3_roi_chans_used,'+'), sprintf('%d-%d',P3_stat_window), P3_roi_mean_amp;
+    'N2峰值潜伏期(ms)', strjoin(N2_roi_chans_used,'+'), '150-350搜索', N2_roi_peak_lat;
+    'P3峰值潜伏期(ms)', strjoin(P3_roi_chans_used,'+'), '250-600搜索', P3_roi_peak_lat;
+};
+
+for mi = 1:size(all_stat_measures, 1)
+    mname = all_stat_measures{mi, 1};
+    mroi = all_stat_measures{mi, 2};
+    mtw = all_stat_measures{mi, 3};
+    mdata = all_stat_measures{mi, 4};
+    for c = 1:3
+        m = mean(mdata(:,c));
+        s = std(mdata(:,c));
+        se = s / sqrt(nSubj);
+        fprintf(fid, '%s,%s,%s,%s,%d,%.4f,%.4f,%.4f\n', ...
+            mname, mroi, mtw, Cond_names{c}, nSubj, m, s, se);
+    end
+end
+fclose(fid);
+fprintf('已导出: %s\n', fname);
+
+% === 表3: ANOVA 结果 ===
+fname = fullfile(save_table_dir, 'Table3_ANOVA结果.csv');
+fid = fopen(fname, 'w', 'n', 'UTF-8');
+fprintf(fid, '\xEF\xBB\xBF');
+fprintf(fid, '因变量,ROI电极,时间窗(ms),df1,df2,F,p,partial_eta2,显著性\n');
+
+anova_list = {
+    'N2平均振幅', strjoin(N2_roi_chans_used,'+'), sprintf('%d-%d',N2_stat_window), ...
+        anova_results.N2_df1, anova_results.N2_df2, anova_results.N2_F, anova_results.N2_p, anova_results.N2_eta2;
+    'P3平均振幅', strjoin(P3_roi_chans_used,'+'), sprintf('%d-%d',P3_stat_window), ...
+        anova_results.P3_df1, anova_results.P3_df2, anova_results.P3_F, anova_results.P3_p, anova_results.P3_eta2;
+    'N2峰值潜伏期', strjoin(N2_roi_chans_used,'+'), '150-350', ...
+        anova_results.N2lat_df1, anova_results.N2lat_df2, anova_results.N2lat_F, anova_results.N2lat_p, anova_results.N2lat_eta2;
+    'P3峰值潜伏期', strjoin(P3_roi_chans_used,'+'), '250-600', ...
+        anova_results.P3lat_df1, anova_results.P3lat_df2, anova_results.P3lat_F, anova_results.P3lat_p, anova_results.P3lat_eta2;
+};
+
+for ai = 1:size(anova_list, 1)
+    p_val = anova_list{ai, 7};
+    if p_val < 0.001, sig = '***';
+    elseif p_val < 0.01, sig = '**';
+    elseif p_val < 0.05, sig = '*';
+    else, sig = 'n.s.'; end
+    fprintf(fid, '%s,%s,%s,%d,%d,%.3f,%.4f,%.3f,%s\n', ...
+        anova_list{ai,1}, anova_list{ai,2}, anova_list{ai,3}, ...
+        anova_list{ai,4}, anova_list{ai,5}, anova_list{ai,6}, p_val, anova_list{ai,8}, sig);
+end
+fclose(fid);
+fprintf('已导出: %s\n', fname);
+
+% === 表4: 事后配对比较 ===
+fname = fullfile(save_table_dir, 'Table4_事后配对比较_Bonferroni.csv');
+fid = fopen(fname, 'w', 'n', 'UTF-8');
+fprintf(fid, '\xEF\xBB\xBF');
+fprintf(fid, '因变量,比较,t,df,p_uncorrected,p_Bonferroni,Cohens_d,显著性\n');
+
+for mi = 1:length(measures)
+    for pi = 1:n_comparisons
+        fprintf(fid, '%s,%s,%.3f,%d,%.4f,%.4f,%.3f,%s\n', ...
+            measure_names{mi}, pair_labels{pi}, ...
+            posthoc.(measures{mi}).t(pi), posthoc.(measures{mi}).df(pi), ...
+            posthoc.(measures{mi}).p_raw(pi), posthoc.(measures{mi}).p_bonf(pi), ...
+            posthoc.(measures{mi}).d(pi), posthoc.(measures{mi}).sig{pi});
+    end
+end
+fclose(fid);
+fprintf('已导出: %s\n', fname);
+
+% === 表5: 各被试原始数据（N2 平均振幅）===
+fname = fullfile(save_table_dir, 'Table5_个体数据_N2_ROI平均振幅.csv');
+fid = fopen(fname, 'w', 'n', 'UTF-8');
+fprintf(fid, '\xEF\xBB\xBF');
+fprintf(fid, 'Subject,A_correct,B_correct,C_correct\n');
+for si = 1:nSubj
+    fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, ...
+        N2_roi_mean_amp(si,1), N2_roi_mean_amp(si,2), N2_roi_mean_amp(si,3));
+end
+fclose(fid);
+fprintf('已导出: %s\n', fname);
+
+% === 表6: 各被试原始数据（P3 平均振幅）===
+fname = fullfile(save_table_dir, 'Table6_个体数据_P3_ROI平均振幅.csv');
+fid = fopen(fname, 'w', 'n', 'UTF-8');
+fprintf(fid, '\xEF\xBB\xBF');
+fprintf(fid, 'Subject,A_correct,B_correct,C_correct\n');
+for si = 1:nSubj
+    fprintf(fid, '%s,%.4f,%.4f,%.4f\n', SubjNames{si}, ...
+        P3_roi_mean_amp(si,1), P3_roi_mean_amp(si,2), P3_roi_mean_amp(si,3));
+end
+fclose(fid);
+fprintf('已导出: %s\n', fname);
+
+% === 表7: 各被试原始数据（N2 峰值潜伏期）===
+fname = fullfile(save_table_dir, 'Table7_个体数据_N2_ROI峰值潜伏期.csv');
+fid = fopen(fname, 'w', 'n', 'UTF-8');
+fprintf(fid, '\xEF\xBB\xBF');
+fprintf(fid, 'Subject,A_correct,B_correct,C_correct\n');
+for si = 1:nSubj
+    fprintf(fid, '%s,%.1f,%.1f,%.1f\n', SubjNames{si}, ...
+        N2_roi_peak_lat(si,1), N2_roi_peak_lat(si,2), N2_roi_peak_lat(si,3));
+end
+fclose(fid);
+fprintf('已导出: %s\n', fname);
+
+% === 表8: 各被试原始数据（P3 峰值潜伏期）===
+fname = fullfile(save_table_dir, 'Table8_个体数据_P3_ROI峰值潜伏期.csv');
+fid = fopen(fname, 'w', 'n', 'UTF-8');
+fprintf(fid, '\xEF\xBB\xBF');
+fprintf(fid, 'Subject,A_correct,B_correct,C_correct\n');
+for si = 1:nSubj
+    fprintf(fid, '%s,%.1f,%.1f,%.1f\n', SubjNames{si}, ...
+        P3_roi_peak_lat(si,1), P3_roi_peak_lat(si,2), P3_roi_peak_lat(si,3));
+end
+fclose(fid);
+fprintf('已导出: %s\n', fname);
+
+% ---- 9.9 ROI 波形图和柱状图 ----
+fig_num = fig_num + 1;
+figure('Name', sprintf('图%d ROI波形与柱状图', fig_num), 'NumberTitle', 'off', ...
+    'Position', [50 50 1400 500]);
+
+% 子图1: N2 ROI 波形
+subplot(2, 3, 1); hold on;
+set(gca, 'YDir', 'reverse');
+for c = 1:3
+    roi_wave = squeeze(mean(mean(data(:, c, N2_roi_idx, :), 1), 3));
+    plot(EEG.times, roi_wave, 'Color', colors_correct{c}, 'LineWidth', 1.5);
+end
+xlim(disp_xlim);
+yl = ylim;
+fill([N2_stat_window(1) N2_stat_window(2) N2_stat_window(2) N2_stat_window(1)], ...
+    [yl(1) yl(1) yl(2) yl(2)], [0.9 0.9 0.9], 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
+line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
+title(sprintf('N2 ROI (%s)', strjoin(N2_roi_chans_used,'+')), 'fontsize', 11, 'FontWeight', 'bold');
+xlabel('ms'); ylabel('\muV');
+legend('A','B','C', 'Location', 'best', 'FontSize', 8);
+box off;
+
+% 子图2: P3 ROI 波形
+subplot(2, 3, 2); hold on;
+set(gca, 'YDir', 'reverse');
+for c = 1:3
+    roi_wave = squeeze(mean(mean(data(:, c, P3_roi_idx, :), 1), 3));
+    plot(EEG.times, roi_wave, 'Color', colors_correct{c}, 'LineWidth', 1.5);
+end
+xlim(disp_xlim);
+yl = ylim;
+fill([P3_stat_window(1) P3_stat_window(2) P3_stat_window(2) P3_stat_window(1)], ...
+    [yl(1) yl(1) yl(2) yl(2)], [0.9 0.9 0.9], 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+line([0 0], ylim, 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
+line(xlim, [0 0], 'Color', [0.5 0.5 0.5], 'LineStyle', '-');
+title(sprintf('P3 ROI (%s)', strjoin(P3_roi_chans_used,'+')), 'fontsize', 11, 'FontWeight', 'bold');
+xlabel('ms'); ylabel('\muV');
+legend('A','B','C', 'Location', 'best', 'FontSize', 8);
+box off;
+
+% 子图3: 分析方案文字说明
+subplot(2, 3, 3);
+axis off;
+text_str = {
+    '\bf分析方案\rm', '', ...
+    sprintf('N2 ROI: %s', strjoin(N2_roi_chans_used, ' + ')), ...
+    sprintf('N2 窗口: %d-%dms', N2_stat_window(1), N2_stat_window(2)), ...
+    '', ...
+    sprintf('P3 ROI: %s', strjoin(P3_roi_chans_used, ' + ')), ...
+    sprintf('P3 窗口: %d-%dms', P3_stat_window(1), P3_stat_window(2)), ...
+    '', ...
+    sprintf('被试数: N = %d', nSubj), ...
+    '统计: RM-ANOVA + Bonferroni'
+};
+text(0.1, 0.9, text_str, 'VerticalAlignment', 'top', 'FontSize', 10, ...
+    'FontName', 'FixedWidth', 'Interpreter', 'tex');
+
+% 子图4: N2 ROI 柱状图
+subplot(2, 3, 4); hold on;
+means_N2_roi = mean(N2_roi_mean_amp);
+se_N2_roi = std(N2_roi_mean_amp) / sqrt(nSubj);
+bar_h = bar(means_N2_roi);
+bar_h.FaceColor = 'flat';
+bar_h.CData = [1 0 0; 0 0 1; 0 0 0];
+errorbar(1:3, means_N2_roi, se_N2_roi, 'k.', 'LineWidth', 1.5);
+set(gca, 'XTickLabel', {'A', 'B', 'C'});
+ylabel('\muV');
+title(sprintf('N2 平均振幅 (%d-%dms)', N2_stat_window(1), N2_stat_window(2)), 'fontsize', 11);
+if ~isnan(anova_results.N2_p)
+    if anova_results.N2_p < 0.001, sig_txt = '***';
+    elseif anova_results.N2_p < 0.01, sig_txt = '**';
+    elseif anova_results.N2_p < 0.05, sig_txt = '*';
+    else, sig_txt = 'n.s.'; end
+    text(2, max(means_N2_roi + se_N2_roi) * 1.1, ...
+        sprintf('F=%.2f, p=%.3f %s', anova_results.N2_F, anova_results.N2_p, sig_txt), ...
+        'HorizontalAlignment', 'center', 'FontSize', 9);
+end
+box off;
+
+% 子图5: P3 ROI 柱状图
+subplot(2, 3, 5); hold on;
+means_P3_roi = mean(P3_roi_mean_amp);
+se_P3_roi = std(P3_roi_mean_amp) / sqrt(nSubj);
+bar_h = bar(means_P3_roi);
+bar_h.FaceColor = 'flat';
+bar_h.CData = [1 0 0; 0 0 1; 0 0 0];
+errorbar(1:3, means_P3_roi, se_P3_roi, 'k.', 'LineWidth', 1.5);
+set(gca, 'XTickLabel', {'A', 'B', 'C'});
+ylabel('\muV');
+title(sprintf('P3 平均振幅 (%d-%dms)', P3_stat_window(1), P3_stat_window(2)), 'fontsize', 11);
+if ~isnan(anova_results.P3_p)
+    if anova_results.P3_p < 0.001, sig_txt = '***';
+    elseif anova_results.P3_p < 0.01, sig_txt = '**';
+    elseif anova_results.P3_p < 0.05, sig_txt = '*';
+    else, sig_txt = 'n.s.'; end
+    text(2, max(means_P3_roi + se_P3_roi) * 1.1, ...
+        sprintf('F=%.2f, p=%.3f %s', anova_results.P3_F, anova_results.P3_p, sig_txt), ...
+        'HorizontalAlignment', 'center', 'FontSize', 9);
+end
+box off;
+
+% 子图6: 潜伏期柱状图（N2 + P3 并排）
+subplot(2, 3, 6); hold on;
+lat_means = [mean(N2_roi_peak_lat); mean(P3_roi_peak_lat)]';  % 3×2
+lat_se = [std(N2_roi_peak_lat)/sqrt(nSubj); std(P3_roi_peak_lat)/sqrt(nSubj)]';
+bar_h = bar(lat_means);
+bar_h(1).FaceColor = [0.3 0.6 0.9];  % N2 蓝色
+bar_h(2).FaceColor = [0.9 0.5 0.3];  % P3 橙色
+ngroups = 3; nbars = 2;
+groupwidth = min(0.8, nbars/(nbars + 1.5));
+for bi = 1:nbars
+    x = (1:ngroups) - groupwidth/2 + (2*bi-1) * groupwidth / (2*nbars);
+    errorbar(x, lat_means(:,bi), lat_se(:,bi), 'k.', 'LineWidth', 1.5);
+end
+set(gca, 'XTickLabel', {'A', 'B', 'C'});
+ylabel('ms');
+title('峰值潜伏期', 'fontsize', 11);
+legend('N2', 'P3', 'Location', 'best', 'FontSize', 8);
+box off;
+
+sgtitle(sprintf('图%d ROI 统计分析总结', fig_num), 'fontsize', 14, 'FontWeight', 'bold');
+
+% ---- 9.10 保存统计结果到 .mat 文件 ----
+stat_save_path = fullfile(save_table_dir, 'ROI_statistics.mat');
+save(stat_save_path, 'N2_roi_mean_amp', 'P3_roi_mean_amp', ...
+    'N2_roi_peak_amp', 'N2_roi_peak_lat', 'P3_roi_peak_amp', 'P3_roi_peak_lat', ...
+    'anova_results', 'posthoc', ...
+    'N2_roi_chans_used', 'P3_roi_chans_used', ...
+    'N2_stat_window', 'P3_stat_window', ...
+    'SubjNames', 'Cond_names', 'nSubj');
+fprintf('\n统计结果已保存至: %s\n', stat_save_path);
+
+fprintf('\n====== Part 9 完成！所有表格已导出至: %s ======\n', save_table_dir);
+fprintf('  Table1_分析方案总结.csv\n');
+fprintf('  Table2_描述统计.csv\n');
+fprintf('  Table3_ANOVA结果.csv\n');
+fprintf('  Table4_事后配对比较_Bonferroni.csv\n');
+fprintf('  Table5_个体数据_N2_ROI平均振幅.csv\n');
+fprintf('  Table6_个体数据_P3_ROI平均振幅.csv\n');
+fprintf('  Table7_个体数据_N2_ROI峰值潜伏期.csv\n');
+fprintf('  Table8_个体数据_P3_ROI峰值潜伏期.csv\n');
+fprintf('  ROI_statistics.mat\n');
 
 fprintf('\n====== 所有分析完成！ ======\n');
 
