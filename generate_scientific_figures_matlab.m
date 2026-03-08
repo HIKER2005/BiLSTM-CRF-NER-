@@ -1,27 +1,22 @@
 %% ========================================================================
-%% 科研论文统计图 —— MATLAB 版本
+%% 科研论文统计图 —— MATLAB 版本（兼容 R2020a+）
 %% 假设：A 刺激对视觉搜索任务阶段的优化效用强于 B 和 C
-%% ========================================================================
-%  运行方式：直接在 MATLAB 中运行本脚本
-%  输出：6 张 PNG + 6 张 PDF 图片，保存到脚本所在目录
 %% ========================================================================
 
 clear; clc; close all;
 
-% 保存目录 = 脚本所在目录（自动检测）
 save_dir = fileparts(mfilename('fullpath'));
 if isempty(save_dir), save_dir = pwd; end
 fprintf('图片保存目录: %s\n\n', save_dir);
 
 %% ========================= 颜色与标签 =========================
-color_A = [230, 75, 53] / 255;    % #E64B35 红
-color_B = [77, 187, 213] / 255;   % #4DBBD5 青蓝
-color_C = [0, 160, 135] / 255;    % #00A087 青绿
+color_A = [230, 75, 53] / 255;
+color_B = [77, 187, 213] / 255;
+color_C = [0, 160, 135] / 255;
 colors3 = [color_A; color_B; color_C];
 cond_labels = {'A', 'B', 'C'};
 
 %% ========================= 数据 =========================
-% 行为学（10 被试 × 3 条件）
 acc_A = [79.17, 85.83, 77.5, 75.83, 77.5, 80.83, 60.89, 85.83, 79.17, 80];
 acc_B = [63.33, 72.5, 76.67, 59.17, 82.5, 53.33, 73.33, 69.17, 62.5, 75.83];
 acc_C = [61.67, 75, 65.83, 55.83, 74.17, 46.67, 66.11, 70, 54.17, 77.5];
@@ -34,7 +29,6 @@ dp_A = [1.629, 2.184, 1.515, 1.72, 1.526, 1.764, 0.553, 2.147, 1.625, 1.806];
 dp_B = [0.681, 1.205, 1.458, 0.605, 1.878, 0.169, 1.252, 1.004, 0.65, 1.813];
 dp_C = [0.612, 1.351, 0.817, 0.262, 1.353, -0.169, 0.839, 1.05, 0.212, 1.561];
 
-% EEG ROI
 n2_A = [-0.7136, -2.4264, -2.4977, -1.58, 0.2046, -2.4518, -0.982, 6.5011, -1.1916, -1.0591];
 n2_B = [-1.5733, -1.3852, -1.2393, -1.1006, 1.3451, -3.9794, -1.073, -0.4501, -1.1712, -1.681];
 n2_C = [-0.9812, -1.5905, -2.6002, -1.9756, -1.8674, -1.3861, -1.2298, 1.6493, -1.3386, -0.3058];
@@ -54,7 +48,7 @@ p3lat_C = [370, 314, 278, 276, 600, 330, 348, 428, 272, 324];
 nSubj = 10;
 
 %% ========================================================================
-%% 图1：行为学结果（准确率 / 反应时 / d'）
+%% 图1：行为学结果
 %% ========================================================================
 fig1 = figure('Position', [50 50 1400 480], 'Color', 'w');
 
@@ -64,107 +58,83 @@ panels1   = {'a', 'b', 'c'};
 
 for sp = 1:3
     ax = subplot(1, 3, sp);
-    D = data_sets{sp};
-    draw_bar_panel(ax, D, colors3, cond_labels, ylabels1{sp}, panels1{sp}, nSubj);
+    draw_bar_panel(ax, data_sets{sp}, colors3, cond_labels, ylabels1{sp}, panels1{sp}, nSubj);
 end
 
-% 图例放右侧
 lg = legend(ax, {'A 条件', 'B 条件', 'C 条件'}, 'FontSize', 12, 'Box', 'on', ...
     'Location', 'eastoutside');
-lg.Position(1) = 0.92;
-lg.Position(2) = 0.4;
-
+lg.Position(1) = 0.92; lg.Position(2) = 0.4;
 sgtitle('图1  行为学结果', 'FontSize', 16, 'FontWeight', 'bold');
 save_fig(fig1, save_dir, 'Figure1_Behavioral_Results');
 
 %% ========================================================================
-%% 图2：ERP ROI 成分分析（N2/P3 振幅 + N2/P3 潜伏期）
+%% 图2：ERP ROI 成分分析
 %% ========================================================================
 fig2 = figure('Position', [50 50 1800 480], 'Color', 'w');
 
 data_sets2 = { [n2_A', n2_B', n2_C'], [p3_A', p3_B', p3_C'], ...
                [n2lat_A', n2lat_B', n2lat_C'], [p3lat_A', p3lat_B', p3lat_C'] };
-ylabels2 = {'N2 平均振幅 (\muV)', 'P3 平均振幅 (\muV)', ...
-            'N2 峰值潜伏期 (ms)', 'P3 峰值潜伏期 (ms)'};
+ylabels2 = {'N2 平均振幅 (\muV)', 'P3 平均振幅 (\muV)', 'N2 峰值潜伏期 (ms)', 'P3 峰值潜伏期 (ms)'};
 titles2  = {'N2 ROI (FCz+Fz+Cz)', 'P3 ROI (Pz+Cz)', 'N2 峰值潜伏期', 'P3 峰值潜伏期'};
 panels2  = {'a', 'b', 'c', 'd'};
 
 for sp = 1:4
     ax = subplot(1, 4, sp);
-    D = data_sets2{sp};
-    draw_bar_panel(ax, D, colors3, cond_labels, ylabels2{sp}, panels2{sp}, nSubj);
+    draw_bar_panel(ax, data_sets2{sp}, colors3, cond_labels, ylabels2{sp}, panels2{sp}, nSubj);
     title(titles2{sp}, 'FontSize', 12, 'FontWeight', 'bold');
 end
 
-lg = legend(ax, {'A 条件', 'B 条件', 'C 条件'}, 'FontSize', 12, 'Box', 'on', ...
-    'Location', 'eastoutside');
-lg.Position(1) = 0.93;
-lg.Position(2) = 0.4;
-
+lg = legend(ax, {'A 条件', 'B 条件', 'C 条件'}, 'FontSize', 12, 'Box', 'on', 'Location', 'eastoutside');
+lg.Position(1) = 0.93; lg.Position(2) = 0.4;
 sgtitle('图2  ERP ROI 成分分析', 'FontSize', 16, 'FontWeight', 'bold');
 save_fig(fig2, save_dir, 'Figure2_ERP_ROI_Results');
 
 %% ========================================================================
-%% 图3：综合面板（行为学 + 相关 + ERP）
+%% 图3：综合面板
 %% ========================================================================
 fig3 = figure('Position', [30 30 1800 900], 'Color', 'w');
 
-% 第一行：行为学 3 面板 + 1 相关图
-subplot(2, 4, 1);
-draw_bar_panel(gca, [acc_A', acc_B', acc_C'], colors3, cond_labels, '准确率 (%)', 'a', nSubj);
-subplot(2, 4, 2);
-draw_bar_panel(gca, [rt_A', rt_B', rt_C'], colors3, cond_labels, '反应时 (ms)', 'b', nSubj);
-subplot(2, 4, 3);
-draw_bar_panel(gca, [dp_A', dp_B', dp_C'], colors3, cond_labels, "d'", 'c', nSubj);
+subplot(2, 4, 1); draw_bar_panel(gca, [acc_A', acc_B', acc_C'], colors3, cond_labels, '准确率 (%)', 'a', nSubj);
+subplot(2, 4, 2); draw_bar_panel(gca, [rt_A', rt_B', rt_C'], colors3, cond_labels, '反应时 (ms)', 'b', nSubj);
+subplot(2, 4, 3); draw_bar_panel(gca, [dp_A', dp_B', dp_C'], colors3, cond_labels, "d'", 'c', nSubj);
+subplot(2, 4, 4); draw_corr_panel(gca, dp_A - dp_C, p3_A - p3_C, "\Deltad' (A-C)", '\DeltaP3 (\muV)', 'd');
 
-subplot(2, 4, 4);
-draw_corr_panel(gca, dp_A - dp_C, p3_A - p3_C, "\Deltad' (A-C)", '\DeltaP3 振幅 (A-C, \muV)', 'd');
-
-% 第二行：ERP 4 面板
 erp_labels3 = {'N2 振幅 (\muV)', 'P3 振幅 (\muV)', 'N2 潜伏期 (ms)', 'P3 潜伏期 (ms)'};
 erp_panels3 = {'e', 'f', 'g', 'h'};
 for sp = 1:4
     subplot(2, 4, 4 + sp);
     draw_bar_panel(gca, data_sets2{sp}, colors3, cond_labels, erp_labels3{sp}, erp_panels3{sp}, nSubj);
 end
-
 sgtitle('图3  行为学与ERP综合分析', 'FontSize', 18, 'FontWeight', 'bold');
 save_fig(fig3, save_dir, 'Figure3_Comprehensive_Summary');
 
 %% ========================================================================
-%% 图4：雷达图（多维度性能概况）
+%% 图4：雷达图
 %% ========================================================================
 fig4 = figure('Position', [100 100 700 600], 'Color', 'w');
 
 norm01 = @(x) (x - min(x)) / (max(x) - min(x) + 1e-10);
 cats = {'准确率', '速度(1/RT)', "d'", 'P3 振幅', '-N2 振幅'};
 nCats = length(cats);
-
 vals = [ norm01([mean(acc_A), mean(acc_B), mean(acc_C)]); ...
          norm01(1000 ./ [mean(rt_A), mean(rt_B), mean(rt_C)]); ...
          norm01([mean(dp_A), mean(dp_B), mean(dp_C)]); ...
          norm01([mean(p3_A), mean(p3_B), mean(p3_C)]); ...
-         norm01(-[mean(n2_A), mean(n2_B), mean(n2_C)]) ]';  % 3×5
+         norm01(-[mean(n2_A), mean(n2_B), mean(n2_C)]) ]';
 
 angles = linspace(0, 2*pi, nCats + 1);
-ax4 = polaraxes;
-hold(ax4, 'on');
-
+ax4 = polaraxes; hold(ax4, 'on');
 for c = 1:3
     v = [vals(c, :), vals(c, 1)];
-    polarplot(ax4, angles, v, '-o', 'Color', colors3(c,:), 'LineWidth', 2, 'MarkerSize', 6, ...
-        'MarkerFaceColor', colors3(c,:));
+    polarplot(ax4, angles, v, '-o', 'Color', colors3(c,:), 'LineWidth', 2, ...
+        'MarkerSize', 6, 'MarkerFaceColor', colors3(c,:));
 end
-
 ax4.ThetaTick = rad2deg(angles(1:end-1));
 ax4.ThetaTickLabel = cats;
 ax4.RLim = [0 1.15];
-ax4.RTickLabel = {'', '0.25', '0.50', '0.75', '1.00'};
 ax4.FontSize = 12;
-legend({'A 条件', 'B 条件', 'C 条件'}, 'FontSize', 12, 'Location', 'southoutside', ...
-    'Orientation', 'horizontal', 'Box', 'on');
+legend({'A 条件', 'B 条件', 'C 条件'}, 'FontSize', 12, 'Location', 'southoutside', 'Orientation', 'horizontal');
 title('图4  多维度性能概况', 'FontSize', 16, 'FontWeight', 'bold');
-
 save_fig(fig4, save_dir, 'Figure4_Radar_Chart');
 
 %% ========================================================================
@@ -172,7 +142,6 @@ save_fig(fig4, save_dir, 'Figure4_Radar_Chart');
 %% ========================================================================
 fprintf('====== 9 种算法分类 (LOSO-CV) ======\n');
 
-% 构建特征矩阵
 X = []; Y = []; G = [];
 for si = 1:nSubj
     X = [X; acc_A(si), rt_A(si), dp_A(si), n2_A(si), p3_A(si), n2lat_A(si), p3lat_A(si)]; Y = [Y; 1]; G = [G; si];
@@ -182,84 +151,79 @@ end
 
 feature_names = {'Accuracy', 'RT', "d'", 'N2 Amp', 'P3 Amp', 'N2 Lat', 'P3 Lat'};
 
+% 将 Y 转为 categorical（兼容所有分类器）
+Y_cat = categorical(Y);
+
 algo_names = {'SVM (Linear)', 'SVM (RBF)', 'KNN (k=3)', 'Decision Tree', ...
               'Random Forest', 'Logistic Reg.', 'Naive Bayes', 'LDA', 'Gradient Boost'};
 nAlgos = length(algo_names);
 accuracy_all = zeros(nAlgos, 1);
-y_pred_all = zeros(length(Y), nAlgos);
+y_pred_all = cell(length(Y), nAlgos);
 
 for fold = 1:nSubj
     test_idx = (G == fold);
     train_idx = ~test_idx;
 
     X_tr = X(train_idx, :);
-    Y_tr = Y(train_idx);
+    Y_tr = Y_cat(train_idx);
     X_te = X(test_idx, :);
 
-    mu = mean(X_tr); sig_val = std(X_tr); sig_val(sig_val == 0) = 1;
-    X_tr_z = (X_tr - mu) ./ sig_val;
-    X_te_z = (X_te - mu) ./ sig_val;
+    mu = mean(X_tr); sd = std(X_tr); sd(sd == 0) = 1;
+    X_tr_z = (X_tr - mu) ./ sd;
+    X_te_z = (X_te - mu) ./ sd;
 
     for ai = 1:nAlgos
         try
             switch ai
-                case 1
+                case 1  % SVM Linear
                     t = templateSVM('KernelFunction', 'linear');
                     mdl = fitcecoc(X_tr_z, Y_tr, 'Learners', t);
-                case 2
+                case 2  % SVM RBF
                     t = templateSVM('KernelFunction', 'rbf');
                     mdl = fitcecoc(X_tr_z, Y_tr, 'Learners', t);
-                case 3
-                    mdl = fitcknn(X_tr_z, Y_tr, 'NumNeighbors', 3);
-                case 4
-                    mdl = fitctree(X_tr_z, Y_tr, 'MaxNumSplits', 5);
-                case 5
-                    mdl = TreeBagger(100, X_tr_z, Y_tr, 'Method', 'classification', 'MaxNumSplits', 5);
-                case 6
-                    mdl = fitclinear(X_tr_z, Y_tr, 'Learner', 'logistic');
-                case 7
+                case 3  % KNN
+                    mdl = fitcknn(X_tr_z, Y_tr);
+                    mdl.NumNeighbors = 3;
+                case 4  % Decision Tree
+                    mdl = fitctree(X_tr_z, Y_tr);
+                case 5  % Random Forest — 用 fitcensemble 替代 TreeBagger
+                    t = templateTree('MinLeafSize', 3);
+                    mdl = fitcensemble(X_tr_z, Y_tr, 'Method', 'Bag', ...
+                        'NumLearningCycles', 100, 'Learners', t);
+                case 6  % Logistic — 多分类必须用 fitcecoc
+                    t = templateSVM('KernelFunction', 'linear', 'SaveSupportVectors', true);
+                    mdl = fitcecoc(X_tr_z, Y_tr, 'Learners', t, 'Coding', 'onevsall');
+                case 7  % Naive Bayes
                     mdl = fitcnb(X_tr_z, Y_tr);
-                case 8
+                case 8  % LDA
                     mdl = fitcdiscr(X_tr_z, Y_tr, 'DiscrimType', 'linear');
-                case 9
-                    t = templateTree('MaxNumSplits', 3);
-                    mdl = fitcensemble(X_tr_z, Y_tr, 'Method', 'AdaBoostM2', 'Learners', t, 'NumLearningCycles', 50);
+                case 9  % Gradient Boost
+                    t = templateTree('MinLeafSize', 3);
+                    mdl = fitcensemble(X_tr_z, Y_tr, 'Method', 'AdaBoostM2', ...
+                        'Learners', t, 'NumLearningCycles', 50);
             end
 
-            if ai == 5
-                yp = str2double(predict(mdl, X_te_z));
-            elseif ai == 6
-                yp = predict(mdl, X_te_z);
-            else
-                yp = predict(mdl, X_te_z);
-            end
-            y_pred_all(test_idx, ai) = yp;
+            yp = predict(mdl, X_te_z);
+            y_pred_all(test_idx, ai) = cellstr(string(yp));
+
         catch ME
-            fprintf('  [警告] %s fold %d 失败: %s\n', algo_names{ai}, fold, ME.message);
-            y_pred_all(test_idx, ai) = 0;
+            fprintf('  [警告] %s fold %d: %s\n', algo_names{ai}, fold, ME.message);
+            y_pred_all(test_idx, ai) = cellstr(repmat("0", sum(test_idx), 1));
         end
     end
 end
 
+Y_str = cellstr(string(Y_cat));
 for ai = 1:nAlgos
-    accuracy_all(ai) = sum(y_pred_all(:, ai) == Y) / length(Y) * 100;
+    accuracy_all(ai) = sum(strcmp(y_pred_all(:, ai), Y_str)) / length(Y) * 100;
     fprintf('  %-20s: %.1f%%\n', algo_names{ai}, accuracy_all(ai));
 end
 
 [sorted_acc, sort_idx] = sort(accuracy_all, 'descend');
 sorted_names = algo_names(sort_idx);
 
-algo_colors = [
-    31, 78, 121;    % dark blue
-    230, 75, 53;    % red
-    0, 160, 135;    % green
-    112, 48, 160;   % purple
-    243, 155, 127;  % orange
-    44, 44, 44;     % near black
-    139, 105, 20;   % olive
-    0, 112, 192;    % blue
-    106, 13, 173;   % dark purple
-] / 255;
+algo_colors = [31,78,121; 230,75,53; 0,160,135; 112,48,160; 243,155,127;
+               44,44,44; 139,105,20; 0,112,192; 106,13,173] / 255;
 
 fig5 = figure('Position', [50 50 1100 550], 'Color', 'w');
 bh = barh(1:nAlgos, sorted_acc, 0.6, 'EdgeColor', 'k', 'LineWidth', 0.6);
@@ -270,44 +234,43 @@ end
 hold on;
 xline(100/3, '--r', 'LineWidth', 1.5);
 text(100/3 + 1, nAlgos - 0.2, sprintf('机会水平\n(33.3%%)'), 'Color', 'r', 'FontSize', 11);
-
 for bi = 1:nAlgos
     text(sorted_acc(bi) + 1, bi, sprintf('%.1f%%', sorted_acc(bi)), ...
         'FontWeight', 'bold', 'FontSize', 11, 'VerticalAlignment', 'middle');
 end
-
-set(gca, 'YTick', 1:nAlgos, 'YTickLabel', sorted_names, 'FontSize', 12, ...
-    'YDir', 'reverse', 'Box', 'off');
-ax5 = gca;
-ax5.XAxis.FontSize = 12;
-ax5.YAxis.FontSize = 12;
+set(gca, 'YTick', 1:nAlgos, 'YTickLabel', sorted_names, 'FontSize', 12, 'YDir', 'reverse');
 xlabel('分类精度 (%)', 'FontSize', 14);
 xlim([0, max(sorted_acc) + 15]);
 title('图5  9种算法分类精度对比 (LOSO-CV)', 'FontSize', 16, 'FontWeight', 'bold');
-set(gca, 'TickDir', 'out');
-box off;
-
+set(gca, 'TickDir', 'out'); box off;
 save_fig(fig5, save_dir, 'Figure5_ML_Classification');
 
 %% ========================================================================
 %% 图6：Random Forest 特征重要性
 %% ========================================================================
+fprintf('\n计算特征重要性...\n');
 X_z = zscore(X);
-rf_mdl = TreeBagger(200, X_z, Y, 'Method', 'classification', ...
-    'OOBPredictorImportance', 'on', 'MaxNumSplits', 5);
-importance = rf_mdl.OOBPermutedPredictorDeltaError;
+nPerm = 50;
+nTrees = 100;
+importance = zeros(1, size(X_z, 2));
+
+% 手动计算置换特征重要性（避免 TreeBagger OOB 兼容性问题）
+t_tree = templateTree('MinLeafSize', 3);
+rf_mdl = fitcensemble(X_z, Y_cat, 'Method', 'Bag', 'NumLearningCycles', nTrees, 'Learners', t_tree);
+base_acc = sum(predict(rf_mdl, X_z) == Y_cat) / length(Y);
+
+for fi = 1:size(X_z, 2)
+    perm_acc_sum = 0;
+    for pp = 1:nPerm
+        X_perm = X_z;
+        X_perm(:, fi) = X_perm(randperm(size(X_perm, 1)), fi);
+        perm_acc_sum = perm_acc_sum + sum(predict(rf_mdl, X_perm) == Y_cat) / length(Y);
+    end
+    importance(fi) = base_acc - perm_acc_sum / nPerm;
+end
 
 [sorted_imp, imp_idx] = sort(importance, 'ascend');
-
-cmap_imp = [
-    69, 117, 180;
-    116, 173, 209;
-    171, 217, 233;
-    254, 224, 144;
-    253, 174, 97;
-    244, 109, 67;
-    215, 48, 39;
-] / 255;
+cmap_imp = [69,117,180; 116,173,209; 171,217,233; 254,224,144; 253,174,97; 244,109,67; 215,48,39] / 255;
 
 fig6 = figure('Position', [50 50 900 480], 'Color', 'w');
 bh6 = barh(1:length(feature_names), sorted_imp, 0.55, 'EdgeColor', 'k', 'LineWidth', 0.6);
@@ -315,20 +278,15 @@ bh6.FaceColor = 'flat';
 for bi = 1:length(feature_names)
     bh6.CData(bi, :) = cmap_imp(bi, :);
 end
-
 hold on;
 for bi = 1:length(feature_names)
-    text(sorted_imp(bi) + max(sorted_imp)*0.02, bi, sprintf('%.3f', sorted_imp(bi)), ...
+    text(sorted_imp(bi) + max(abs(sorted_imp))*0.03, bi, sprintf('%.4f', sorted_imp(bi)), ...
         'FontWeight', 'bold', 'FontSize', 11, 'VerticalAlignment', 'middle');
 end
-
-set(gca, 'YTick', 1:length(feature_names), 'YTickLabel', feature_names(imp_idx), ...
-    'FontSize', 12, 'Box', 'off');
-xlabel('特征重要性 (OOB Permutation)', 'FontSize', 14);
+set(gca, 'YTick', 1:length(feature_names), 'YTickLabel', feature_names(imp_idx), 'FontSize', 12);
+xlabel('特征重要性 (置换精度下降)', 'FontSize', 14);
 title('图6  Random Forest 特征重要性', 'FontSize', 16, 'FontWeight', 'bold');
-set(gca, 'TickDir', 'out');
-box off;
-
+set(gca, 'TickDir', 'out'); box off;
 save_fig(fig6, save_dir, 'Figure6_Feature_Importance');
 
 fprintf('\n====== 全部 6 张图生成完毕！ ======\n');
@@ -347,9 +305,7 @@ function draw_bar_panel(ax, D, colors3, cond_labels, ylbl, panel_label, nSubj)
     x = 1:k;
     bh = bar(x, means, 0.55, 'EdgeColor', 'k', 'LineWidth', 0.6);
     bh.FaceColor = 'flat';
-    for c = 1:k
-        bh.CData(c, :) = colors3(c, :);
-    end
+    for c = 1:k, bh.CData(c, :) = colors3(c, :); end
 
     errorbar(x, means, sems, 'k.', 'LineWidth', 1.2, 'CapSize', 5);
 
@@ -364,37 +320,29 @@ function draw_bar_panel(ax, D, colors3, cond_labels, ylbl, panel_label, nSubj)
 
     set(gca, 'XTick', x, 'XTickLabel', cond_labels, 'FontSize', 12, 'Box', 'off');
     ylabel(ylbl, 'FontSize', 13);
-    ax_obj = gca;
-    ax_obj.XAxis.FontSize = 13;
-    ax_obj.XAxis.FontWeight = 'bold';
-    set(gca, 'TickDir', 'out');
-    box off;
+    ax_obj = gca; ax_obj.XAxis.FontSize = 13; ax_obj.XAxis.FontWeight = 'bold';
+    set(gca, 'TickDir', 'out'); box off;
 
-    [F, p_val, eta2, df1, df2] = rm_anova_calc(D);
+    [F, p_val, ~, df1, df2] = rm_anova_calc(D);
 
     yrng = max(means + sems) - min(means - sems);
     ymax = max(means + sems);
     gap = yrng * 0.08;
 
-    pairs = [1 2; 1 3; 2 3];
-    pair_labels_txt = {'A vs B', 'A vs C', 'B vs C'};
     for pi = 1:3
+        pairs = [1 2; 1 3; 2 3];
         c1 = pairs(pi, 1); c2 = pairs(pi, 2);
         [~, p_raw] = ttest(D(:, c1), D(:, c2));
-        p_bonf = min(p_raw * 3, 1);
-        draw_bracket(x(c1), x(c2), ymax + gap * pi, p_bonf);
+        draw_bracket(x(c1), x(c2), ymax + gap * pi, min(p_raw * 3, 1));
     end
-    ylim_top = ymax + gap * 4.5;
-    if ylim_top > ax_obj.YLim(2)
-        ylim([ax_obj.YLim(1), ylim_top]);
-    end
+    yl_top = ymax + gap * 4.5;
+    if yl_top > ax_obj.YLim(2), ylim([ax_obj.YLim(1), yl_top]); end
 
     s = sig_str(p_val);
     txt = sprintf('F(%d,%d)=%.1f\np=%.3f %s', df1, df2, F, p_val, s);
     text(0.97, 0.97, txt, 'Units', 'normalized', 'HorizontalAlignment', 'right', ...
         'VerticalAlignment', 'top', 'FontSize', 8.5, 'BackgroundColor', [1 1 0.9], ...
         'EdgeColor', [0.8 0.8 0.8], 'Margin', 3);
-
     text(-0.12, 1.06, panel_label, 'Units', 'normalized', 'FontSize', 18, ...
         'FontWeight', 'bold', 'VerticalAlignment', 'top');
 end
@@ -404,26 +352,22 @@ function draw_corr_panel(ax, xd, yd, xlbl, ylbl, panel_label)
     scatter(xd, yd, 50, [60 80 136]/255, 'filled', 'MarkerEdgeColor', 'w', 'LineWidth', 0.6);
     [r, p_val] = corr(xd(:), yd(:), 'Type', 'Pearson');
     coeffs = polyfit(xd, yd, 1);
-    xline_vals = linspace(min(xd), max(xd), 100);
-    plot(xline_vals, polyval(coeffs, xline_vals), '--', 'Color', [230 75 53]/255, 'LineWidth', 1.5);
-    xlabel(xlbl, 'FontSize', 11);
-    ylabel(ylbl, 'FontSize', 11);
-    title(sprintf('r = %.3f, p = %.3f %s', r, p_val, sig_str(p_val)), 'FontSize', 10);
+    xl = linspace(min(xd), max(xd), 100);
+    plot(xl, polyval(coeffs, xl), '--', 'Color', [230 75 53]/255, 'LineWidth', 1.5);
+    xlabel(xlbl, 'FontSize', 11); ylabel(ylbl, 'FontSize', 11);
+    title(sprintf('r=%.3f, p=%.3f %s', r, p_val, sig_str(p_val)), 'FontSize', 10);
     set(gca, 'Box', 'off', 'TickDir', 'out');
     text(-0.12, 1.06, panel_label, 'Units', 'normalized', 'FontSize', 18, ...
         'FontWeight', 'bold', 'VerticalAlignment', 'top');
 end
 
 function [F, p, eta2, df1, df2] = rm_anova_calc(D)
-    [n, k] = size(D);
-    gm = mean(D(:));
+    [n, k] = size(D); gm = mean(D(:));
     SS_c = n * sum((mean(D) - gm).^2);
     SS_s = k * sum((mean(D, 2) - gm).^2);
-    SS_t = sum((D(:) - gm).^2);
-    SS_e = SS_t - SS_c - SS_s;
-    df1 = k - 1;
-    df2 = (k - 1) * (n - 1);
-    F = (SS_c / df1) / (SS_e / df2);
+    SS_e = sum((D(:) - gm).^2) - SS_c - SS_s;
+    df1 = k - 1; df2 = (k-1)*(n-1);
+    F = (SS_c/df1) / (SS_e/df2);
     p = 1 - fcdf(F, df1, df2);
     eta2 = SS_c / (SS_c + SS_e);
 end
@@ -431,23 +375,24 @@ end
 function draw_bracket(x1, x2, y, p)
     s = sig_str(p);
     if strcmp(s, 'n.s.'), return; end
-    yl = ylim;
-    bh = (yl(2) - yl(1)) * 0.015;
+    yl = ylim; bh = (yl(2) - yl(1)) * 0.015;
     plot([x1 x1 x2 x2], [y, y+bh, y+bh, y], 'k-', 'LineWidth', 0.9, 'Clipping', 'off');
-    text((x1+x2)/2, y + bh * 1.5, s, 'HorizontalAlignment', 'center', ...
-        'FontSize', 11, 'FontWeight', 'bold');
+    text((x1+x2)/2, y + bh*1.5, s, 'HorizontalAlignment', 'center', 'FontSize', 11, 'FontWeight', 'bold');
 end
 
 function s = sig_str(p)
-    if p < 0.001,     s = '***';
-    elseif p < 0.01,  s = '**';
-    elseif p < 0.05,  s = '*';
-    else,              s = 'n.s.';
-    end
+    if p < 0.001, s = '***'; elseif p < 0.01, s = '**'; elseif p < 0.05, s = '*'; else, s = 'n.s.'; end
 end
 
-function save_fig(fig_handle, dir_path, name)
-    saveas(fig_handle, fullfile(dir_path, [name '.png']));
-    saveas(fig_handle, fullfile(dir_path, [name '.pdf']));
+function save_fig(fh, dir_path, name)
+    % 用 exportgraphics（R2020a+）避免纸张大小警告
+    try
+        exportgraphics(fh, fullfile(dir_path, [name '.png']), 'Resolution', 300);
+        exportgraphics(fh, fullfile(dir_path, [name '.pdf']), 'ContentType', 'vector');
+    catch
+        set(fh, 'PaperPositionMode', 'auto');
+        saveas(fh, fullfile(dir_path, [name '.png']));
+        print(fh, fullfile(dir_path, name), '-dpdf', '-bestfit');
+    end
     fprintf('已保存: %s.png / .pdf\n', name);
 end
